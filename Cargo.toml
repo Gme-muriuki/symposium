@@ -13,13 +13,12 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-sacp = "10.1.0"
-sacp-tokio = "10.1.0"
-sacp-conductor = "10.0.1"
-sacp-rmcp = "10.0.1"
-sacp-tee = "10.0.1"
-yopo = "10.0.1"
-elizacp = "11.0.0"
+sacp = "11.0.0-alpha.1"
+sacp-tokio = "11.0.0-alpha.1"
+sacp-conductor = "11.0.0-alpha.1"
+sacp-rmcp = "11.0.0-alpha.1"
+yopo = "11.0.0-alpha.1"
+elizacp = "11.0.0-alpha.1"
 jsonrpcmsg = "0.1.2"
 
 # Core async runtime

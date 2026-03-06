@@ -9,6 +9,7 @@ use rmcp::{
     },
     tool, tool_handler, tool_router,
 };
+use sacp::Proxy;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -105,16 +106,16 @@ pub async fn run_mcp_stdio() -> Result<()> {
 
 /// Run as ACP proxy component that provides the MCP server.
 pub async fn run_acp_proxy() -> Result<()> {
-    use sacp::ProxyToConductor;
     use sacp::mcp_server::McpServer;
     use sacp_rmcp::McpServerExt;
 
     let mcp_server = McpServer::from_rmcp("symposium-math", MathServer::new);
 
-    ProxyToConductor::builder()
+    Proxy
+        .builder()
         .name("symposium-math-proxy")
         .with_mcp_server(mcp_server)
-        .serve(sacp_tokio::Stdio::new())
+        .connect_to(sacp_tokio::Stdio::new())
         .await?;
 
     Ok(())

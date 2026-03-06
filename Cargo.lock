@@ -609,16 +609,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cordyceps"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "688d7fbb8092b8de775ef2536f36c8c31f2bc4006ece2e8d8ad2d17d00ce0a2a"
-dependencies = [
- "loom",
- "tracing",
-]
-
-[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -940,12 +930,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "diatomic-waker"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab03c107fafeb3ee9f5925686dbb7a73bc76e3932abb0d2b365cb64b169cf04c"
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1044,9 +1028,9 @@ dependencies = [
 
 [[package]]
 name = "elizacp"
-version = "11.0.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6e3dc846bea9d2d8bccd857cf0299297980a82963c0f7bdbed4cb6e17a525f8"
+checksum = "b2ce154ebc0825e07c012f6f6375dce75391dc1a6d4160ca55459ad485f6600c"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -1111,7 +1095,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1262,19 +1246,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures-buffered"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8e0e1f38ec07ba4abbde21eed377082f17ccb988be9d988a5adbf4bafc118fd"
-dependencies = [
- "cordyceps",
- "diatomic-waker",
- "futures-core",
- "pin-project-lite",
- "spin",
-]
-
-[[package]]
 name = "futures-channel"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1286,16 +1257,14 @@ dependencies = [
 
 [[package]]
 name = "futures-concurrency"
-version = "7.6.3"
+version = "7.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eb68017df91f2e477ed4bea586c59eaecaa47ed885a770d0444e21e62572cd2"
+checksum = "175cd8cca9e1d45b87f18ffa75088f2099e3c4fe5e2f83e42de112560bea8ea6"
 dependencies = [
  "fixedbitset 0.5.7",
- "futures-buffered",
  "futures-core",
  "futures-lite",
  "pin-project",
- "slab",
  "smallvec",
 ]
 
@@ -1383,21 +1352,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
 dependencies = [
  "byteorder",
-]
-
-[[package]]
-name = "generator"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f04ae4152da20c76fe800fa48659201d5cf627c5149ca0b707b69d7eef6cf9"
-dependencies = [
- "cc",
- "cfg-if",
- "libc",
- "log",
- "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -2080,19 +2034,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "loom"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
-dependencies = [
- "cfg-if",
- "generator",
- "scoped-tls",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "lru"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2400,7 +2341,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2830,7 +2771,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3189,7 +3130,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3241,9 +3182,9 @@ checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
 
 [[package]]
 name = "sacp"
-version = "10.1.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704f40d3c269b30229c34093b658ec80c4fac103281654b3965249c592dd6fa6"
+checksum = "337fd4bd779e666b889032766bd57e46ffbe0fc07657444d67730c32398e20a2"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3266,9 +3207,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-conductor"
-version = "10.0.1"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f91f2131d781dcd54d0dc380a73d90151cb6e95a7a66b80f3c90af8bcb161ed9"
+checksum = "4bfbba002169f6382d2fa81292e8e3d040facc58df9a3f6170860213f3fd0e23"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3299,9 +3240,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-derive"
-version = "10.0.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92150f9246c01d501855e34469810a82adc27c416c8d8e21665567f8cd966f29"
+checksum = "ff639847b2093b2b6c441948f510f505cbcc17209e102ec321dc878901e42359"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3310,11 +3251,12 @@ dependencies = [
 
 [[package]]
 name = "sacp-rmcp"
-version = "10.0.1"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cebe54bd70d4e89d6c8626bf9748895a6ca1ded19e4567bd849aa3684ee58212"
+checksum = "411f1ae78d329f0a4d103d280d3e426976dad26d7bbaac389ac5cb485fa35d74"
 dependencies = [
  "futures",
+ "futures-concurrency",
  "rmcp",
  "sacp",
  "tokio",
@@ -3322,28 +3264,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "sacp-tee"
-version = "10.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e1fccc4f02d8a82eccc4ff8f60e1229e8da171deebbd4f8081e3005eb5f18f3"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "sacp",
- "sacp-tokio",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "sacp-tokio"
-version = "10.1.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efa7ff79ad3e47bd5e9ee668996e2cd53b5ddb99ab9b29366efb964af0943e6d"
+checksum = "33df11d7b3d6bbb6fa348a95f3392ce04569c542bb2e09c5176030ac1c9aae4d"
 dependencies = [
  "futures",
  "sacp",
@@ -3356,9 +3280,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-trace-viewer"
-version = "10.0.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1de10c1c409ff66899faa59ad3e1d576e6177fc80a1f49c476a42cf792d47d"
+checksum = "ee45d6d7d18b20760357706b87c2a18e75c95ee359d8844c6b4b421b3dbd696c"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
@@ -3414,12 +3338,6 @@ dependencies = [
  "serde_derive_internals",
  "syn 2.0.112",
 ]
-
-[[package]]
-name = "scoped-tls"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
 
 [[package]]
 name = "scopeguard"
@@ -3688,12 +3606,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spin"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
-
-[[package]]
 name = "sse-stream"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3806,7 +3718,6 @@ dependencies = [
  "sacp",
  "sacp-conductor",
  "sacp-rmcp",
- "sacp-tee",
  "sacp-tokio",
  "schemars",
  "serde",
@@ -3837,7 +3748,6 @@ dependencies = [
  "dirs",
  "sacp",
  "sacp-conductor",
- "sacp-tee",
  "sacp-tokio",
  "symposium-acp-agent",
  "symposium-ferris",
@@ -3973,7 +3883,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4870,7 +4780,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -5329,9 +5239,9 @@ dependencies = [
 
 [[package]]
 name = "yopo"
-version = "10.0.1"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54f2f357691337f76d3d9a1931c9f49c385684d3cd637891d742ecf71f12423e"
+checksum = "dc7b95a228a6b284e11666086275f72fc1a53c9c2074cfc359c99be164552228"
 dependencies = [
  "clap",
  "sacp",
