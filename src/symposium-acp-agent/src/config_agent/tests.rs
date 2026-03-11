@@ -229,17 +229,8 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
 
     Client
         .builder()
-        .on_receive_dispatch(
-            async |dispatch: Dispatch, connection| {
-                tracing::debug!(?dispatch, "Received dispatch");
-                connection.send_proxied_message(dispatch)?;
-                Ok(())
-            },
-            sacp::on_receive_dispatch!(),
-        )
         .on_receive_notification(
             async move |notif: SessionNotification, _cx| {
-                tracing::debug!(?notif, "Received notification");
                 match notif.update {
                     SessionUpdate::AgentMessageChunk(ContentChunk { content, .. }) => {
                         if let ContentBlock::Text(TextContent { text, .. }) = content {
@@ -273,7 +264,6 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
             let session_id = session_response.session_id;
 
             // Send a prompt - elizacp should respond
-            notifications.lock().unwrap().clear();
             cx.send_request(PromptRequest::new(
                 session_id.clone(),
                 vec![ContentBlock::Text(TextContent::new("Hello, how are you?"))],
