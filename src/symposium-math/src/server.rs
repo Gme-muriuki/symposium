@@ -4,9 +4,7 @@ use anyhow::Result;
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{
-        CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo, ToolsCapability,
-    },
+    model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router,
 };
 use sacp::Proxy;
@@ -79,19 +77,12 @@ impl MathServer {
 #[tool_handler]
 impl ServerHandler for MathServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: Default::default(),
-            capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability::default()),
-                ..Default::default()
-            },
-            server_info: Implementation {
-                name: "symposium-math".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                ..Default::default()
-            },
-            instructions: Some("A simple math server that can compute averages.".into()),
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(
+                "symposium-math",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions("A simple math server that can compute averages.")
     }
 }
 
