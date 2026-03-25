@@ -23,8 +23,8 @@ enum Commands {
 
     /// Handle a hook event (invoked by editor plugins)
     Hook {
-        /// The hook event name (e.g., pre-tool-use)
-        event: String,
+        /// The hook event (e.g., claude:pre-tool)
+        event: hook::HookEvent,
     },
 }
 
@@ -48,7 +48,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Some(Commands::Hook { event }) => hook::run(&event),
+        Some(Commands::Hook { event }) => hook::run(event),
         None => {
             println!("symposium — AI the Rust Way");
             println!();
