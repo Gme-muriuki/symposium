@@ -1,0 +1,60 @@
+# macOS
+.DS_Store
+
+taskspaces
+
+# Swift/Xcode
+/.build
+symposium/macos-app/.build/
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Rust
+target/
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+.netrc
+.claude
+killme.*
+xxx.*
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# mdbook generated files
+/book/
+
+# Editor files
+.vscode/settings.json
+!vscode-extension/test-workspace/.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Kiro directory
+.kiro/
+.sparkle-space/
+
+# Generated skill files and build output
+agent-plugins/claude-code/skills/rust/SKILL.md
+dist/
+
+# Used for planning that shouldn't be committed
+WIP.md
+retcon-spec.toml

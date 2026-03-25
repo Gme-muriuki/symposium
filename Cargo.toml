@@ -1,0 +1,24 @@
+[package]
+name = "symposium"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "AI the Rust Way"
+repository = "https://github.com/symposium-dev/symposium"
+readme = "README.md"
+
+[[bin]]
+name = "symposium"
+path = "src/main.rs"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ name }-v{ version }/{ name }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/{ name }-v{ version }/{ name }-{ target }.zip"
+pkg-fmt = "zip"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+symposium-rtk = "0.31"
