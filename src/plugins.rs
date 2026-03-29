@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::plugins_dir;
-use crate::hook::HookEvent;
+use crate::hook::{HookEvent, HookPayload};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Plugin {
@@ -24,11 +24,14 @@ pub struct Installation {
 pub struct Hook {
     pub name: String,
     pub event: HookEvent,
+    pub matcher: Option<String>,
     pub command: String,
 }
 
 /// Return all hooks (with their plugin name) that match `event`.
-pub fn hooks_for_event(event: &HookEvent) -> Result<Vec<(String, Hook)>> {
+pub fn hooks_for_payload(payload: &HookPayload) -> Result<Vec<(String, Hook)>> {
+    tracing::debug!(?payload);
+
     let mut out = Vec::new();
     let dir = plugins_dir();
 
@@ -38,9 +41,21 @@ pub fn hooks_for_event(event: &HookEvent) -> Result<Vec<(String, Hook)>> {
             Ok(plugin) => {
                 let name = plugin.name.clone();
                 for hook in plugin.hooks.into_iter() {
-                    if hook.event == *event {
-                        out.push((name.clone(), hook));
+                    tracing::debug!(?hook);
+                    if hook.event != payload.sub_payload.hook_event() {
+                        continue;
                     }
+                    if let Some(matcher) = &hook.matcher {
+                        if !payload.sub_payload.matches_matcher(matcher) {
+                            tracing::info!(
+                                ?payload,
+                                ?matcher,
+                                "skipping hook due to non-matching matcher"
+                            );
+                            continue;
+                        }
+                    }
+                    out.push((name.clone(), hook));
                 }
             }
             Err(e) => tracing::warn!(error = %e, "failed to load plugin file"),
@@ -103,7 +118,7 @@ commands = ["wget https://example.org/bin/tool"]
 
 [[hooks]]
 name = "test"
-event = "claude:pre-tool-use"
+event = "PreToolUse"
 command = "echo open"
 "#;
 
