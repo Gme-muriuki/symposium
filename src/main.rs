@@ -31,7 +31,8 @@ enum Commands {
     },
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     config::init();
 
     let cli = Cli::parse();
@@ -41,17 +42,14 @@ fn main() -> ExitCode {
             print!("{}", tutorial::render_cli());
             ExitCode::SUCCESS
         }
-        Some(Commands::Mcp) => {
-            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-            match rt.block_on(mcp::serve()) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("MCP server error: {e}");
-                    ExitCode::FAILURE
-                }
+        Some(Commands::Mcp) => match mcp::serve().await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("MCP server error: {e}");
+                ExitCode::FAILURE
             }
-        }
-        Some(Commands::Hook { event }) => hook::run(event),
+        },
+        Some(Commands::Hook { event }) => hook::run(event).await,
         None => {
             println!("symposium — AI the Rust Way");
             println!();

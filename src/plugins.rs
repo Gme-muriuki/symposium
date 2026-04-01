@@ -73,32 +73,6 @@ pub struct Hook {
     pub command: String,
 }
 
-/// Return all hooks (with their plugin name) that match the event in `payload`.
-///
-/// Backward-compatible wrapper: loads all plugins and filters hooks.
-/// Will be removed when hook.rs is refactored.
-pub fn hooks_for_payload(payload: &crate::hook::HookPayload) -> Result<Vec<(String, Hook)>> {
-    let plugins = load_all_plugins();
-    let mut out = Vec::new();
-
-    for ParsedPlugin { path: _, plugin } in &plugins {
-        let name = plugin.name.clone();
-        for hook in &plugin.hooks {
-            if hook.event != payload.sub_payload.hook_event() {
-                continue;
-            }
-            if let Some(matcher) = &hook.matcher {
-                if !payload.sub_payload.matches_matcher(matcher) {
-                    continue;
-                }
-            }
-            out.push((name.clone(), hook.clone()));
-        }
-    }
-
-    Ok(out)
-}
-
 #[derive(Debug, serde::Serialize)]
 pub struct ProviderInfo {
     pub name: String,
