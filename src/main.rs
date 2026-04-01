@@ -8,6 +8,7 @@ mod git_source;
 mod hook;
 mod mcp;
 mod plugins;
+mod skills;
 pub mod tutorial;
 
 #[derive(Parser)]
