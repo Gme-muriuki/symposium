@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
 mod config;
+mod crate_sources;
 mod hook;
 mod mcp;
 mod plugins;
