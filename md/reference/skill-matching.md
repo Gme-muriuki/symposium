@@ -24,7 +24,7 @@ Semantics:
 
 ## Usage in matching fields
 
-The `crates` and `applies-when` fields in both `SKILL.md` frontmatter and plugin `[[skills]]` groups accept simple atom lists.
+The `crates` field in both `SKILL.md` frontmatter and plugin `[[skills]]` groups accepts simple atom lists.
 
 In TOML plugin manifests, `crates` accepts a string or array:
 
@@ -35,8 +35,3 @@ In SKILL.md frontmatter, `crates` uses comma-separated values:
 
 - `crates: serde`
 - `crates: serde, tokio>=1.40`
-
-`applies-when` follows the same atom syntax:
-
-- `applies-when: regex`
-- `applies-when = ["tokio", "tokio-stream"]`

@@ -29,12 +29,9 @@ Prefer deriving `Serialize` and `Deserialize` on data types.
 
 ## Determining when the skill applies
 
-The two matching fields are:
+The `crates` field declares which crate(s) the skill is about (comma-separated in frontmatter: `crates: serde, tokio>=1.0`).
 
-- `crates`: which crate(s) the skill is about (comma-separated in frontmatter: `crates: serde, tokio>=1.0`)
-- `applies-when`: additional crates that must be present in the workspace
-
-At the skill level, these fields narrow the enclosing `[[skills]]` group. They do not widen it.
+At the skill level, this field narrows the enclosing `[[skills]]` group. It does not widen it.
 
 Examples of forms you can use today:
 
@@ -52,8 +49,7 @@ Example:
 ---
 name: serde-with-regex
 description: Guidance for projects combining serde and regex
-crates: serde
-applies-when: regex
+crates: serde, regex
 activation: default
 ---
 

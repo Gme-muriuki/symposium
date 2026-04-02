@@ -64,8 +64,7 @@ name = "widgetlib-serde"
 
 # group of skills for serialization in widgetlib 1.0
 [[skills]]
-crates = ["widgetlib=1.0"]
-applies-when = ["serde"]
+crates = ["widgetlib=1.0", "serde"]
 source.git = "https://github.com/org/repo/tree/main/widgetlib-serde"
 ```
 
@@ -91,9 +90,8 @@ Each `SKILL.md` follows the [agentskills.io](https://agentskills.io/specificatio
 Skills are matched to crate queries using two mechanisms:
 
 - **`crates`** — declares which crates this skill advises on, as simple crate atoms (crate name with optional version constraint): `serde`, `tokio>=1.0`, `serde==1.0.193`. In TOML manifests, accepts a string or array: `crates = "serde"` or `crates = ["serde", "tokio"]`. In SKILL.md frontmatter, uses comma-separated values: `crates: serde, tokio>=1.0`.
-- **`applies-when`** — a list of crate atoms that must all be present in the workspace (AND semantics). Used for gating on broader context.
 
-Both can be declared at the `[[skills]]` group level (in the plugin manifest) and at the individual skill level (SKILL.md frontmatter). They compose as AND (specialization): both layers must match for a skill to be selected. A skill with its own `crates` narrows the group's scope; it cannot widen it.
+This can be declared at the `[[skills]]` group level (in the plugin manifest) and at the individual skill level (SKILL.md frontmatter). They compose as AND (specialization): both layers must match for a skill to be selected. A skill with its own `crates` narrows the group's scope; it cannot widen it.
 
 When `symposium crate <name>` or the MCP `crate` tool is invoked, matching skills are included in the output. Skills with `activation: default` have their body inlined; skills with `activation: optional` are listed with their frontmatter metadata and path so the agent can load them on demand.
 
