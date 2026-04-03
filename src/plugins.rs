@@ -695,7 +695,7 @@ mod tests {
                 name: assert-struct
                 description: Check struct layout
                 crates: serde
-                activation: default
+                activation: always
                 ---
 
                 Use this skill.

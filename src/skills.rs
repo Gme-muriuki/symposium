@@ -648,9 +648,9 @@ fn parse_frontmatter(content: &str) -> Result<RawFrontmatter> {
 
 fn parse_activation(s: &str) -> Result<Activation> {
     match s.trim().to_lowercase().as_str() {
-        "default" => Ok(Activation::Always),
+        "always" => Ok(Activation::Always),
         "optional" => Ok(Activation::Optional),
-        other => bail!("unknown activation mode: {other:?} (expected \"default\" or \"optional\")"),
+        other => bail!("unknown activation mode: {other:?} (expected \"always\" or \"optional\")"),
     }
 }
 
@@ -729,7 +729,7 @@ mod tests {
                 name: test-skill
                 description: Test
                 crates: serde
-                activation: default
+                activation: always
                 ---
 
                 Use serde like this.
@@ -923,7 +923,7 @@ mod tests {
                 name: my-standalone
                 description: A standalone skill
                 crates: serde
-                activation: default
+                activation: always
                 ---
 
                 Standalone body.
@@ -1078,7 +1078,7 @@ mod tests {
                 name: standalone-serde
                 description: Standalone serde skill
                 crates: serde
-                activation: default
+                activation: always
                 ---
 
                 Body.
@@ -1114,7 +1114,7 @@ mod tests {
                 name: standalone-serde
                 description: Standalone serde skill
                 crates: serde
-                activation: default
+                activation: always
                 ---
 
                 Use serde standalone.
@@ -1152,7 +1152,7 @@ mod tests {
                 ---
                 name: tokio-skill
                 crates: tokio
-                activation: default
+                activation: always
                 ---
 
                 Body.
