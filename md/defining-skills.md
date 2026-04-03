@@ -21,7 +21,7 @@ skills/
 name: serde-basics
 description: Basic guidance for serde usage
 crates: serde
-activation: default
+activation: always
 ---
 
 Prefer deriving `Serialize` and `Deserialize` on data types.
@@ -50,7 +50,7 @@ Example:
 name: serde-with-regex
 description: Guidance for projects combining serde and regex
 crates: serde, regex
-activation: default
+activation: always
 ---
 
 Keep serialized regex patterns in a stable string form.
@@ -60,9 +60,9 @@ Keep serialized regex patterns in a stable string form.
 
 Activation controls how the skill is presented when Symposium finds a match.
 
-- `default`: inline the skill body in `symposium crate` output
+- `always`: inline the skill body in `symposium crate` output
 - `optional`: list the skill and its path without inlining the body
 
-Use `default` for broad usage guidance that is usually relevant whenever the crate is in use.
+Use `always` for broad usage guidance that is usually relevant whenever the crate is in use.
 
 Use `optional` for targeted workflows or checks that are only sometimes needed, such as migration notes, debugging steps, or one-off integration tasks.
