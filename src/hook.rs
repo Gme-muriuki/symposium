@@ -177,9 +177,8 @@ pub async fn dispatch_builtin(sym: &Symposium, payload: &HookPayload) -> HookOut
         HookSubPayload::PostToolUse(post) => {
             handle_post_tool_use(sym, post).await
         }
-        HookSubPayload::UserPromptSubmit(_prompt) => {
-            // TODO (Step 8): nudge logic
-            HookOutput::empty()
+        HookSubPayload::UserPromptSubmit(prompt) => {
+            handle_user_prompt_submit(sym, prompt).await
         }
     }
 }
@@ -337,6 +336,268 @@ async fn record_activation(db: &mut toasty::Db, session_id: &str, crate_name: &s
     } else {
         tracing::info!(session_id, crate_name, "recorded skill activation");
     }
+}
+
+/// Handle UserPromptSubmit: scan for crate mentions and nudge about unloaded skills.
+async fn handle_user_prompt_submit(
+    sym: &Symposium,
+    prompt_payload: &UserPromptSubmitPayload,
+) -> HookOutput {
+    let nudge_interval = sym.config.hooks.nudge_interval;
+
+    // If nudge-interval is 0, disable nudges entirely
+    if nudge_interval == 0 {
+        return HookOutput::empty();
+    }
+
+    let Some(ref session_id) = prompt_payload.session_id else {
+        return HookOutput::empty();
+    };
+    let Some(ref cwd_str) = prompt_payload.cwd else {
+        return HookOutput::empty();
+    };
+
+    let cwd = std::path::Path::new(cwd_str);
+
+    // Open DB and ensure workspace data is fresh
+    let mut db = match crate::state::open_db(sym.config_dir()).await {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to open state DB in UserPromptSubmit");
+            return HookOutput::empty();
+        }
+    };
+
+    if let Err(e) = crate::workspace::ensure_fresh(sym, &mut db, cwd).await {
+        tracing::warn!(error = %e, "failed to refresh workspace in UserPromptSubmit");
+        return HookOutput::empty();
+    }
+
+    // Increment prompt count
+    let prompt_count = increment_prompt_count(&mut db, session_id).await;
+
+    // Get available skills for this cwd
+    use crate::state::AvailableSkill;
+    let available: Vec<AvailableSkill> =
+        match AvailableSkill::filter_by_cwd(cwd_str).exec(&mut db).await {
+            Ok(skills) => skills,
+            Err(_) => return HookOutput::empty(),
+        };
+
+    if available.is_empty() {
+        return HookOutput::empty();
+    }
+
+    // Extract unique crate names from available skills
+    let available_crate_names: std::collections::BTreeSet<String> =
+        available.iter().map(|s| s.crate_name.clone()).collect();
+
+    // Find crate mentions in the prompt
+    let mentioned = extract_crate_mentions(&prompt_payload.prompt, &available_crate_names);
+
+    if mentioned.is_empty() {
+        return HookOutput::empty();
+    }
+
+    // Check activations for this session
+    use crate::state::SkillActivation;
+    let activations: Vec<SkillActivation> =
+        match SkillActivation::filter_by_session_id(session_id)
+            .exec(&mut db)
+            .await
+        {
+            Ok(a) => a,
+            Err(_) => Vec::new(),
+        };
+    let activated_crates: std::collections::HashSet<&str> =
+        activations.iter().map(|a| a.crate_name.as_str()).collect();
+
+    // Check nudges for this session
+    use crate::state::SkillNudge;
+    let nudges: Vec<SkillNudge> = match SkillNudge::filter_by_session_id(session_id)
+        .exec(&mut db)
+        .await
+    {
+        Ok(n) => n,
+        Err(_) => Vec::new(),
+    };
+
+    // Build nudge messages
+    let mut nudge_crates = Vec::new();
+
+    for crate_name in &mentioned {
+        // Skip if already activated
+        if activated_crates.contains(crate_name.as_str()) {
+            continue;
+        }
+
+        // Find the most recent nudge for this crate (highest at_prompt)
+        let existing_nudge = nudges
+            .iter()
+            .filter(|n| n.crate_name == *crate_name)
+            .max_by_key(|n| n.at_prompt);
+
+        match existing_nudge {
+            None => {
+                // Never nudged — nudge now
+                nudge_crates.push(crate_name.clone());
+                record_nudge(&mut db, session_id, crate_name, prompt_count).await;
+            }
+            Some(nudge) => {
+                // Check if enough prompts have elapsed for re-nudge
+                if prompt_count - nudge.at_prompt >= nudge_interval {
+                    nudge_crates.push(crate_name.clone());
+                    // We can't easily update a single nudge, so just record the new prompt count.
+                    // The nudge check uses the latest at_prompt for each crate, so inserting
+                    // a new row with the current prompt count effectively "updates" the nudge.
+                    record_nudge(&mut db, session_id, crate_name, prompt_count).await;
+                }
+            }
+        }
+    }
+
+    if nudge_crates.is_empty() {
+        return HookOutput::empty();
+    }
+
+    // Format nudge message
+    let mut context = String::new();
+    for crate_name in &nudge_crates {
+        context.push_str(&format!(
+            "The `{crate_name}` crate has specialized guidance available.\n\
+             To load it, run: `symposium crate {crate_name}`\n\n"
+        ));
+    }
+
+    HookOutput::with_context("UserPromptSubmit", context.trim_end().to_string())
+}
+
+/// Increment the session prompt count, returning the new count.
+async fn increment_prompt_count(db: &mut toasty::Db, session_id: &str) -> i64 {
+    use crate::state::SessionState;
+
+    match SessionState::get_by_session_id(db, session_id).await {
+        Ok(mut state) => {
+            state.prompt_count += 1;
+            let count = state.prompt_count;
+            let _ = state.update().exec(db).await;
+            count
+        }
+        Err(_) => {
+            // First prompt in this session
+            let _ = toasty::create!(SessionState {
+                session_id: session_id.to_string(),
+                prompt_count: 1,
+            })
+            .exec(db)
+            .await;
+            1
+        }
+    }
+}
+
+/// Record a nudge in the DB.
+async fn record_nudge(db: &mut toasty::Db, session_id: &str, crate_name: &str, at_prompt: i64) {
+    use crate::state::SkillNudge;
+    let _ = toasty::create!(SkillNudge {
+        session_id: session_id.to_string(),
+        crate_name: crate_name.to_string(),
+        at_prompt: at_prompt,
+    })
+    .exec(db)
+    .await;
+}
+
+/// Extract crate names mentioned in code-like contexts within the prompt.
+///
+/// Matches crate names only inside:
+/// - Inline code: `foo`, `foo::Bar`
+/// - Fenced code blocks
+/// - Rust paths: `foo::` or `::foo`
+pub fn extract_crate_mentions(
+    prompt: &str,
+    available_crates: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+
+    let mut in_fenced = false;
+    for line in prompt.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fenced = !in_fenced;
+            continue;
+        }
+
+        if in_fenced {
+            // Inside fenced code block — check entire line
+            check_line_for_crates(line, available_crates, &mut found);
+        } else {
+            // Check inline backtick regions
+            let mut rest = line;
+            while let Some(start) = rest.find('`') {
+                rest = &rest[start + 1..];
+                if let Some(end) = rest.find('`') {
+                    let code = &rest[..end];
+                    check_line_for_crates(code, available_crates, &mut found);
+                    rest = &rest[end + 1..];
+                } else {
+                    break;
+                }
+            }
+
+            // Check for Rust path patterns: `foo::` or `::foo`
+            check_rust_paths(line, available_crates, &mut found);
+        }
+    }
+
+    found.into_iter().collect()
+}
+
+fn check_line_for_crates(
+    code: &str,
+    available_crates: &std::collections::BTreeSet<String>,
+    found: &mut std::collections::BTreeSet<String>,
+) {
+    for crate_name in available_crates {
+        if code.contains(crate_name.as_str()) && is_word_boundary_match(code, crate_name) {
+            found.insert(crate_name.clone());
+        }
+    }
+}
+
+fn check_rust_paths(
+    line: &str,
+    available_crates: &std::collections::BTreeSet<String>,
+    found: &mut std::collections::BTreeSet<String>,
+) {
+    for crate_name in available_crates {
+        let path_prefix = format!("{crate_name}::");
+        let path_suffix = format!("::{crate_name}");
+        if line.contains(&path_prefix) || line.contains(&path_suffix) {
+            found.insert(crate_name.clone());
+        }
+    }
+}
+
+fn is_word_boundary_match(text: &str, name: &str) -> bool {
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(name) {
+        let abs_pos = start + pos;
+        let before_ok = abs_pos == 0 || {
+            let b = text.as_bytes()[abs_pos - 1];
+            !b.is_ascii_alphanumeric() && b != b'_'
+        };
+        let after_pos = abs_pos + name.len();
+        let after_ok = after_pos >= text.len() || {
+            let b = text.as_bytes()[after_pos];
+            !b.is_ascii_alphanumeric() && b != b'_'
+        };
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs_pos + 1;
+    }
+    false
 }
 
 /// Dispatch plugin hooks (spawn subprocesses).
@@ -656,6 +917,62 @@ mod tests {
             cwd: Some("/tmp".to_string()),
         };
         assert_eq!(detect_crate_activation_mcp(&post), None);
+    }
+
+    // --- Crate mention detection tests ---
+
+    fn crate_set(names: &[&str]) -> std::collections::BTreeSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn extract_mentions_inline_backticks() {
+        let available = crate_set(&["tokio", "serde", "log"]);
+        let prompt = "I need to use `tokio` for async and `serde` for serialization";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["serde", "tokio"]);
+    }
+
+    #[test]
+    fn extract_mentions_fenced_code_block() {
+        let available = crate_set(&["tokio", "serde"]);
+        let prompt = "Here's the code:\n```rust\nuse tokio::runtime;\n```";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["tokio"]);
+    }
+
+    #[test]
+    fn extract_mentions_rust_path() {
+        let available = crate_set(&["tokio", "serde"]);
+        let prompt = "The function uses tokio::spawn to run tasks";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["tokio"]);
+    }
+
+    #[test]
+    fn extract_mentions_no_false_positive_plain_text() {
+        let available = crate_set(&["log", "time"]);
+        let prompt = "I want to log in to the server and it's time to deploy";
+        let found = extract_crate_mentions(prompt, &available);
+        // "log" and "time" in plain text should NOT match
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn extract_mentions_word_boundary() {
+        let available = crate_set(&["serde"]);
+        let prompt = "Check the `serde_json` crate";
+        let found = extract_crate_mentions(prompt, &available);
+        // "serde" inside "serde_json" should NOT match (underscore is word char)
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn extract_mentions_exact_backtick() {
+        let available = crate_set(&["serde"]);
+        let prompt = "Use `serde` for this";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["serde"]);
     }
 
     #[test]

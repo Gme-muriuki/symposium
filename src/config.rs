@@ -19,6 +19,31 @@ pub struct Config {
     /// User-defined plugin sources (git repos or local paths).
     #[serde(default, rename = "plugin-source")]
     pub plugin_source: Vec<PluginSourceConfig>,
+
+    /// Hook behavior settings.
+    #[serde(default)]
+    pub hooks: HooksConfig,
+}
+
+/// Configuration for hook behavior.
+#[derive(Debug, Deserialize, Clone)]
+pub struct HooksConfig {
+    /// Number of prompts before re-nudging about an unloaded crate skill.
+    /// Set to 0 to disable nudges entirely.
+    #[serde(default = "default_nudge_interval", rename = "nudge-interval")]
+    pub nudge_interval: i64,
+}
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self {
+            nudge_interval: default_nudge_interval(),
+        }
+    }
+}
+
+fn default_nudge_interval() -> i64 {
+    50
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -42,6 +67,7 @@ impl Default for Config {
             cache_dir: None,
             defaults: DefaultsConfig::default(),
             plugin_source: Vec::new(),
+            hooks: HooksConfig::default(),
         }
     }
 }
