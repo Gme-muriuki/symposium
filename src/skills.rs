@@ -227,13 +227,13 @@ pub async fn skills_applicable_to(
         for group in &plugin.skills {
             let (group_crates, skills) = load_skills_for_group(sym, path, group, for_crates).await;
 
-            collect_matching_skills(&skills, &group_crates, for_crates, &mut results);
+            collect_skills_applicable_to(&skills, &group_crates, for_crates, &mut results);
         }
     }
 
     // Standalone skills -- these are already loaded as part of the plugin
     // registry.
-    collect_matching_skills(&registry.standalone_skills, &[], for_crates, &mut results);
+    collect_skills_applicable_to(&registry.standalone_skills, &[], for_crates, &mut results);
 
     results
 }
@@ -523,7 +523,7 @@ fn load_skill(skill_md_path: &Path, group: &SkillGroup) -> Result<Skill> {
 }
 
 /// Filter skills by crate constraints, collecting matches with group context.
-fn collect_matching_skills(
+fn collect_skills_applicable_to(
     skills: &[Skill],
     group_crates: &[Predicate],
     for_crates: &[(String, semver::Version)],
