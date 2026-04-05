@@ -60,9 +60,9 @@ struct FixtureScanResult {
 
 /// Create a test context by overlaying fixture fragments into a tempdir.
 ///
-/// `fixtures_base` is the directory containing fixture subdirectories.
-/// Each fixture name corresponds to a subdirectory under `fixtures_base`.
-/// Files are copied in order, so later fixtures override earlier ones.
+/// Each fixture name corresponds to a subdirectory under `tests/fixtures/`
+/// in the symposium workspace. Files are copied in order, so later fixtures
+/// override earlier ones.
 ///
 /// After copying, the function reports which directories contain
 /// `config.toml` and `Cargo.toml`. The `config.toml` directory becomes
@@ -81,7 +81,7 @@ struct FixtureScanResult {
 ///         Cargo.toml
 ///         src/lib.rs
 ///
-/// with_fixture(fixtures_base, &["plugins0", "workspace0"])
+/// with_fixture(&["plugins0", "workspace0"])
 ///
 /// $tmpdir/
 ///     dot-symposium/                <-- sym.config_dir()
@@ -90,7 +90,8 @@ struct FixtureScanResult {
 ///     Cargo.toml                    <-- from workspace0, workspace_root = $tmpdir
 ///     src/lib.rs                    <-- from workspace0
 /// ```
-pub fn with_fixture(fixtures_base: &Path, fixtures: &[&str]) -> TestContext {
+pub fn with_fixture(fixtures: &[&str]) -> TestContext {
+    let fixtures_base = Path::new(env!("SYMPOSIUM_FIXTURES_DIR"));
     let tempdir = tempfile::tempdir().expect("failed to create tempdir");
     let root = tempdir.path();
 

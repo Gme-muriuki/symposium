@@ -1,16 +1,10 @@
-use std::path::Path;
-
 use symposium::hook::{
     HookPayload, HookSubPayload, PostToolUsePayload, PreToolUsePayload,
 };
 
-fn fixtures() -> &'static Path {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
-}
-
 #[tokio::test]
 async fn pre_tool_use_builtin_empty() {
-    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(&["plugins0"]);
     let payload = HookPayload {
         sub_payload: HookSubPayload::PreToolUse(PreToolUsePayload {
             tool_name: "Bash".to_string(),
@@ -23,7 +17,7 @@ async fn pre_tool_use_builtin_empty() {
 
 #[tokio::test]
 async fn post_tool_use_records_bash_activation() {
-    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(&["plugins0"]);
     let cwd = ctx.sym.config_dir().to_string_lossy().to_string();
     let payload = HookPayload {
         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
@@ -41,7 +35,7 @@ async fn post_tool_use_records_bash_activation() {
 
 #[tokio::test]
 async fn post_tool_use_records_mcp_activation() {
-    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(&["plugins0"]);
     let cwd = ctx.sym.config_dir().to_string_lossy().to_string();
     let payload = HookPayload {
         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
@@ -59,7 +53,7 @@ async fn post_tool_use_records_mcp_activation() {
 
 #[tokio::test]
 async fn post_tool_use_no_session_returns_empty() {
-    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0"]);
+    let ctx = symposium_testlib::with_fixture(&["plugins0"]);
     let payload = HookPayload {
         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
             tool_name: "Bash".to_string(),
