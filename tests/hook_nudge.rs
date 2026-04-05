@@ -1,0 +1,84 @@
+use std::path::Path;
+
+use expect_test::expect;
+use symposium::hook::{
+    HookPayload, HookSubPayload, PostToolUsePayload, UserPromptSubmitPayload,
+};
+
+fn fixtures() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
+}
+
+#[tokio::test]
+async fn nudges_about_available_skill() {
+    // plugins0 has a standalone serde skill; workspace0 has serde as a dep.
+    // The nudge fires because serde is both in the workspace and has a matching skill.
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0", "workspace0"]);
+    let cwd = ctx
+        .workspace_root
+        .as_ref()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let payload = HookPayload {
+        sub_payload: HookSubPayload::UserPromptSubmit(UserPromptSubmitPayload {
+            prompt: "I need to use `serde`".to_string(),
+            session_id: Some("s1".to_string()),
+            cwd: Some(cwd),
+        }),
+        rest: serde_json::Map::new(),
+    };
+    let output = ctx.invoke_hook(&payload).await;
+    let ctx_text = output
+        .hook_specific_output
+        .as_ref()
+        .and_then(|h| h.additional_context.as_deref())
+        .unwrap_or("");
+    assert!(
+        ctx_text.contains("serde"),
+        "nudge should mention serde: {ctx_text}"
+    );
+    expect![[r#"
+        The `serde` crate has specialized guidance available.
+        To load it, run: `symposium crate serde`
+    "#]]
+    .assert_eq(&format!("{ctx_text}\n"));
+}
+
+#[tokio::test]
+async fn activation_suppresses_nudge() {
+    // After activating a crate via post-tool-use, a subsequent prompt mention
+    // should NOT nudge about that crate.
+    let ctx = symposium_testlib::with_fixture(fixtures(), &["plugins0", "workspace0"]);
+    let cwd = ctx
+        .workspace_root
+        .as_ref()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    // First: record activation via PostToolUse
+    let activate = HookPayload {
+        sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium crate serde"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some(cwd.clone()),
+        }),
+        rest: serde_json::Map::new(),
+    };
+    ctx.invoke_hook(&activate).await;
+
+    // Second: mention serde in a prompt — should not nudge since already activated
+    let prompt = HookPayload {
+        sub_payload: HookSubPayload::UserPromptSubmit(UserPromptSubmitPayload {
+            prompt: "I need to use `serde` for serialization".to_string(),
+            session_id: Some("s1".to_string()),
+            cwd: Some(cwd),
+        }),
+        rest: serde_json::Map::new(),
+    };
+    let output = ctx.invoke_hook(&prompt).await;
+    assert!(output.hook_specific_output.is_none());
+}

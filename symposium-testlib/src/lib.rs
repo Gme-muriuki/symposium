@@ -42,6 +42,12 @@ impl TestContext {
     pub async fn invoke_hook(&self, payload: &HookPayload) -> HookOutput {
         hook::dispatch_builtin(&self.sym, payload).await
     }
+
+    /// Replace temp directory paths with a stable placeholder for snapshot tests.
+    pub fn normalize_paths(&self, output: &str) -> String {
+        let config_dir = self.sym.config_dir().to_string_lossy().to_string();
+        output.replace(&config_dir, "$CONFIG_DIR")
+    }
 }
 
 /// Directories discovered while copying fixture files.
