@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 use crate::config::Symposium;
-use crate::predicate::{self, Predicate};
 use crate::plugins::{ParsedPlugin, PluginRegistry, SkillGroup};
+use crate::predicate::{self, Predicate};
 
 /// Format the list of skills applicable to workspace crates as display text.
 pub async fn list_output(
@@ -57,7 +57,7 @@ pub async fn info_output(
         .version
         .parse()
         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-    let advice = guidance(sym, &result.name, &resolved_version, registry).await;
+    let advice = crate_guidance(sym, &result.name, &resolved_version, registry).await;
     if !advice.is_empty() {
         output.push_str(&advice.format_output());
     }
@@ -119,15 +119,15 @@ impl Skill {
 
 /// Collected advice for a specific crate query.
 pub struct CrateAdvice {
-    /// Body content of default-activation skills (skill name, path, body text).
-    pub default_content: Vec<(String, PathBuf, String)>,
+    /// Content from `activation: always` skills (skill name, path, body text).
+    pub always_skills: Vec<(String, PathBuf, String)>,
     /// Optional skills with full metadata for agent decision-making.
     pub optional_skills: Vec<Skill>,
 }
 
 impl CrateAdvice {
     pub fn is_empty(&self) -> bool {
-        self.default_content.is_empty() && self.optional_skills.is_empty()
+        self.always_skills.is_empty() && self.optional_skills.is_empty()
     }
 
     /// Format the advice as text to append to crate command output.
@@ -137,9 +137,9 @@ impl CrateAdvice {
     pub fn format_output(&self) -> String {
         let mut out = String::new();
 
-        if !self.default_content.is_empty() {
+        if !self.always_skills.is_empty() {
             out.push_str("\n## Guidance\n");
-            for (name, path, body) in &self.default_content {
+            for (name, path, body) in &self.always_skills {
                 let skill_dir = path.parent().unwrap_or(path);
                 out.push_str(&format!(
                     "\n<skill_content name=\"{name}\">\n\
@@ -218,8 +218,7 @@ pub async fn skills_applicable_to(
     // is extra logic.
     for ParsedPlugin { path, plugin } in &registry.plugins {
         for group in &plugin.skills {
-            let (group_crates, skills) =
-                load_skills_for_group(sym, path, group, for_crates).await;
+            let (group_crates, skills) = load_skills_for_group(sym, path, group, for_crates).await;
 
             collect_matching_skills(&skills, &group_crates, for_crates, &mut results);
         }
@@ -227,26 +226,24 @@ pub async fn skills_applicable_to(
 
     // Standalone skills -- these are already loaded as part of the plugin
     // registry.
-    collect_matching_skills(
-        &registry.standalone_skills,
-        &[],
-        for_crates,
-        &mut results,
-    );
+    collect_matching_skills(&registry.standalone_skills, &[], for_crates, &mut results);
 
     results
 }
 
-
 /// Get guidance for a specific crate from installed plugin skills.
-async fn guidance(
+///
+/// This identifies the relevant skills and separates them into
+/// "always" vs "optional" categories. The "always_skills" are
+/// meant to be shown by default.
+async fn crate_guidance(
     sym: &Symposium,
     crate_name: &str,
     crate_version: &semver::Version,
     registry: &PluginRegistry,
 ) -> CrateAdvice {
     let mut advice = CrateAdvice {
-        default_content: Vec::new(),
+        always_skills: Vec::new(),
         optional_skills: Vec::new(),
     };
 
@@ -257,7 +254,7 @@ async fn guidance(
                 let name = entry.skill.name().to_string();
                 let path = entry.skill.path.clone();
                 advice
-                    .default_content
+                    .always_skills
                     .push((name, path, entry.skill.body.clone()));
             }
             Activation::Optional => {
@@ -333,9 +330,7 @@ async fn load_skills_for_group(
     let group_crates = group.crates.as_deref().unwrap_or_default();
 
     // Pre-fetch filtering: skip groups whose crate predicates don't match any target.
-    if !group_crates.is_empty()
-        && !group_crates.iter().any(|p| p.matches(for_crates))
-    {
+    if !group_crates.is_empty() && !group_crates.iter().any(|p| p.matches(for_crates)) {
         return (group_crates.to_vec(), Vec::new());
     }
 
@@ -422,7 +417,11 @@ async fn fetch_skill_source(sym: &Symposium, git_url: &str) -> Result<PathBuf> {
 /// Resolve the skill directory for a group, fetching from git if needed.
 ///
 /// Returns `None` if the group has no source and the plugin has no local dir.
-async fn resolve_skill_dir(sym: &Symposium, plugin_path: &Path, group: &SkillGroup) -> Option<PathBuf> {
+async fn resolve_skill_dir(
+    sym: &Symposium,
+    plugin_path: &Path,
+    group: &SkillGroup,
+) -> Option<PathBuf> {
     if let Some(path) = &group.source.path {
         return Some(plugin_path.join(path));
     }
@@ -1071,14 +1070,10 @@ mod tests {
 
         let sym = crate::config::Symposium::from_dir(tmp.path());
         let ver = semver::Version::new(1, 0, 0);
-        let advice = guidance(&sym, "serde", &ver, &registry).await;
-        assert_eq!(advice.default_content.len(), 1);
-        assert_eq!(advice.default_content[0].0, "standalone-serde");
-        assert!(
-            advice.default_content[0]
-                .2
-                .contains("Use serde standalone.")
-        );
+        let advice = crate_guidance(&sym, "serde", &ver, &registry).await;
+        assert_eq!(advice.always_skills.len(), 1);
+        assert_eq!(advice.always_skills[0].0, "standalone-serde");
+        assert!(advice.always_skills[0].2.contains("Use serde standalone."));
     }
 
     #[tokio::test]
@@ -1110,7 +1105,7 @@ mod tests {
 
         let sym = crate::config::Symposium::from_dir(tmp.path());
         let ver = semver::Version::new(1, 0, 0);
-        let advice = guidance(&sym, "serde", &ver, &registry).await;
+        let advice = crate_guidance(&sym, "serde", &ver, &registry).await;
         assert!(advice.is_empty());
     }
 
@@ -1255,7 +1250,7 @@ mod tests {
     #[test]
     fn crate_advice_format_empty() {
         let advice = CrateAdvice {
-            default_content: vec![],
+            always_skills: vec![],
             optional_skills: vec![],
         };
         assert!(advice.is_empty());
@@ -1265,7 +1260,7 @@ mod tests {
     #[test]
     fn crate_advice_format_default_only() {
         let advice = CrateAdvice {
-            default_content: vec![(
+            always_skills: vec![(
                 "skill1".into(),
                 PathBuf::from("/skills/serde/SKILL.md"),
                 "Use serde this way.".into(),
@@ -1290,7 +1285,7 @@ mod tests {
     #[test]
     fn crate_advice_format_optional_only() {
         let advice = CrateAdvice {
-            default_content: vec![],
+            always_skills: vec![],
             optional_skills: vec![Skill {
                 frontmatter: BTreeMap::from([
                     ("name".into(), "adv".into()),
