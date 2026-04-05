@@ -1,57 +1,17 @@
 use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 
-use serde::{Deserialize, Serialize};
-
+use crate::config::Symposium;
 use crate::plugins::ParsedPlugin;
 
-#[derive(Debug, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
-pub enum HookEvent {
-    #[value(name = "pre-tool-use")]
-    #[serde(rename = "PreToolUse")]
-    PreToolUse,
-}
+// Re-export hook schema types for convenience.
+pub use crate::hook_schema::{
+    HookEvent, HookOutput, HookPayload, HookSpecificOutput, HookSubPayload, PostToolUsePayload,
+    PreToolUsePayload, UserPromptSubmitPayload,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HookPayload {
-    #[serde(flatten)]
-    pub sub_payload: HookSubPayload,
-    #[serde(flatten)]
-    pub rest: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "hook_event_name")]
-pub enum HookSubPayload {
-    #[serde(rename = "PreToolUse")]
-    PreToolUse(PreToolUsePayload),
-}
-
-impl HookSubPayload {
-    pub fn hook_event(&self) -> HookEvent {
-        match self {
-            HookSubPayload::PreToolUse(_) => HookEvent::PreToolUse,
-        }
-    }
-
-    #[tracing::instrument(ret)]
-    pub fn matches_matcher(&self, matcher: &str) -> bool {
-        // TODO: I'm not sure what exactly Claude's rules are, but this is fine for now
-        if matcher == "*" {
-            return true;
-        }
-        match self {
-            HookSubPayload::PreToolUse(payload) => matcher.contains(&payload.tool_name),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PreToolUsePayload {
-    pub tool_name: String,
-}
-
-pub async fn run(event: HookEvent) -> ExitCode {
+/// CLI entry point: read payload from stdin, dispatch, print output.
+pub async fn run(sym: &Symposium, event: HookEvent) -> ExitCode {
     let mut input = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut input) {
         tracing::warn!(?event, error = %e, "failed to read hook stdin");
@@ -73,16 +33,333 @@ pub async fn run(event: HookEvent) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    dispatch_hook(payload).await
+    // Run built-in hook logic
+    let hook_output = dispatch_builtin(sym, &payload).await;
+
+    // Run plugin hooks (for PreToolUse only, for now)
+    dispatch_plugin_hooks(sym, &payload);
+
+    // Emit structured output if there's anything to say
+    if hook_output.hook_specific_output.is_some() {
+        if let Ok(json) = serde_json::to_string(&hook_output) {
+            println!("{json}");
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
-/// Handle hook dispatch for a parsed payload string. Separated from `run`
-/// so tests and other callers can invoke it without wiring stdin.
-pub async fn dispatch_hook(payload: HookPayload) -> ExitCode {
-    tracing::info!(?payload, "hook invoked");
+/// Built-in hook logic. Returns typed `HookOutput` for the integration test harness.
+pub async fn dispatch_builtin(sym: &Symposium, payload: &HookPayload) -> HookOutput {
+    tracing::info!(?payload, "hook invoked (builtin)");
 
-    let plugins = crate::plugins::load_all_plugins();
-    let hooks = hooks_for_payload(&plugins, &payload);
+    match &payload.sub_payload {
+        HookSubPayload::PreToolUse(_) => {
+            // No built-in logic for PreToolUse — plugin hooks only.
+            HookOutput::empty()
+        }
+        HookSubPayload::PostToolUse(post) => {
+            handle_post_tool_use(sym, post).await
+        }
+        HookSubPayload::UserPromptSubmit(prompt) => {
+            handle_user_prompt_submit(sym, prompt).await
+        }
+    }
+}
+
+/// Handle PostToolUse: detect and record skill activations.
+async fn handle_post_tool_use(sym: &Symposium, post: &PostToolUsePayload) -> HookOutput {
+    let Some(ref session_id) = post.session_id else {
+        return HookOutput::empty();
+    };
+    let Some(ref cwd_str) = post.cwd else {
+        return HookOutput::empty();
+    };
+
+    let cwd = std::path::Path::new(cwd_str);
+    let mut session = crate::session_state::load_session(sym, session_id);
+
+    // Detect activation via symposium crate command (Bash tool)
+    if let Some(crate_name) = detect_crate_activation_bash(post) {
+        session.record_activation(&crate_name);
+    }
+
+    // Detect activation via MCP rust tool with ["crate", "<name>"]
+    if let Some(crate_name) = detect_crate_activation_mcp(post) {
+        session.record_activation(&crate_name);
+    }
+
+    // Detect activation via file path matching available skills
+    let available = crate::workspace::compute_skills_applicable_to_workspace(sym, cwd)
+        .await
+        .unwrap_or_default();
+    if let Some(crate_names) = detect_path_activation(&available, post) {
+        for crate_name in crate_names {
+            session.record_activation(&crate_name);
+        }
+    }
+
+    crate::session_state::save_session(sym, session_id, &session);
+    HookOutput::empty()
+}
+
+/// Detect if a Bash tool successfully ran `symposium crate <name>`.
+///
+/// Matches `symposium crate` or `symposium.sh crate` anywhere in the command,
+/// allowing for path prefixes like `/path/to/symposium.sh crate tokio`.
+fn detect_crate_activation_bash(post: &PostToolUsePayload) -> Option<String> {
+    if post.tool_name != "Bash" {
+        return None;
+    }
+
+    // Check for successful exit
+    let exit_code = post.tool_response.get("exit_code")?.as_i64()?;
+    if exit_code != 0 {
+        return None;
+    }
+
+    let command = post.tool_input.get("command")?.as_str()?;
+
+    // Find "symposium crate" or "symposium.sh crate" in the command,
+    // preceded by a path boundary (whitespace, /, \, or start-of-string).
+    let rest = find_symposium_crate_args(command)?;
+
+    // First word after "crate " is the crate name (skip flags)
+    let crate_name = rest.split_whitespace().find(|w| !w.starts_with('-'))?;
+
+    if crate_name.is_empty() || crate_name == "--list" {
+        return None;
+    }
+
+    Some(crate_name.to_string())
+}
+
+/// Find the arguments after `symposium[.sh] crate` in a command string.
+///
+/// Returns the substring after "crate " if found, with the `symposium` or
+/// `symposium.sh` token preceded by a path boundary (start, whitespace, `/`, `\`).
+fn find_symposium_crate_args(command: &str) -> Option<&str> {
+    for needle in ["symposium.sh crate ", "symposium crate "] {
+        let mut search_from = 0;
+        while let Some(pos) = command[search_from..].find(needle) {
+            let abs_pos = search_from + pos;
+            // Check path boundary: start-of-string, whitespace, / or \
+            let boundary_ok = abs_pos == 0 || {
+                let prev = command.as_bytes()[abs_pos - 1];
+                prev == b' ' || prev == b'\t' || prev == b'/' || prev == b'\\'
+            };
+            if boundary_ok {
+                return Some(&command[abs_pos + needle.len()..]);
+            }
+            search_from = abs_pos + 1;
+        }
+    }
+    None
+}
+
+/// Detect if an MCP rust tool was called with ["crate", "<name>"].
+fn detect_crate_activation_mcp(post: &PostToolUsePayload) -> Option<String> {
+    // MCP tool names include the server prefix, e.g., "mcp__symposium__rust"
+    if !post.tool_name.contains("rust") {
+        return None;
+    }
+
+    let args = post.tool_input.get("args")?.as_array()?;
+    if args.len() >= 2 && args[0].as_str()? == "crate" {
+        let name = args[1].as_str()?;
+        if !name.starts_with('-') && !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+
+    None
+}
+
+/// Detect if Read tool accessed a path matching an available skill directory.
+fn detect_path_activation(
+    available: &[crate::workspace::ApplicableSkill],
+    post: &PostToolUsePayload,
+) -> Option<Vec<String>> {
+    let target_path = match post.tool_name.as_str() {
+        "Read" => post.tool_input.get("file_path")?.as_str()?,
+        _ => return None,
+    };
+
+    let mut crate_names = Vec::new();
+    for skill in available {
+        if target_path.starts_with(&skill.skill_dir_path) {
+            crate_names.push(skill.crate_name.clone());
+        }
+    }
+
+    if crate_names.is_empty() {
+        None
+    } else {
+        Some(crate_names)
+    }
+}
+
+
+/// Handle UserPromptSubmit: scan for crate mentions and nudge about unloaded skills.
+async fn handle_user_prompt_submit(
+    sym: &Symposium,
+    prompt_payload: &UserPromptSubmitPayload,
+) -> HookOutput {
+    let nudge_interval = sym.config.hooks.nudge_interval;
+
+    // If nudge-interval is 0, disable nudges entirely
+    if nudge_interval == 0 {
+        return HookOutput::empty();
+    }
+
+    let Some(ref session_id) = prompt_payload.session_id else {
+        return HookOutput::empty();
+    };
+    let Some(ref cwd_str) = prompt_payload.cwd else {
+        return HookOutput::empty();
+    };
+
+    let cwd = std::path::Path::new(cwd_str);
+
+    // Compute available skills for this workspace (no caching)
+    let available = crate::workspace::compute_skills_applicable_to_workspace(sym, cwd)
+        .await
+        .unwrap_or_default();
+
+    if available.is_empty() {
+        return HookOutput::empty();
+    }
+
+    // Extract unique crate names from available skills
+    let available_crate_names: std::collections::BTreeSet<String> =
+        available.iter().map(|s| s.crate_name.clone()).collect();
+
+    // Find crate mentions in the prompt
+    let mentioned = extract_crate_mentions(&prompt_payload.prompt, &available_crate_names);
+
+    if mentioned.is_empty() {
+        return HookOutput::empty();
+    }
+
+    // Load session, increment prompt count, compute nudges
+    let mut session = crate::session_state::load_session(sym, session_id);
+    session.increment_prompt_count();
+    let nudge_crates = session.compute_nudges(&mentioned, nudge_interval);
+    crate::session_state::save_session(sym, session_id, &session);
+
+    if nudge_crates.is_empty() {
+        return HookOutput::empty();
+    }
+
+    // Format nudge message
+    let mut context = String::new();
+    for crate_name in &nudge_crates {
+        context.push_str(&format!(
+            "The `{crate_name}` crate has specialized guidance available.\n\
+             To load it, run: `symposium crate {crate_name}`\n\n"
+        ));
+    }
+
+    HookOutput::with_context("UserPromptSubmit", context.trim_end().to_string())
+}
+
+
+/// Extract crate names mentioned in code-like contexts within the prompt.
+///
+/// Matches crate names only inside:
+/// - Inline code: `foo`, `foo::Bar`
+/// - Fenced code blocks
+/// - Rust paths: `foo::` or `::foo`
+pub fn extract_crate_mentions(
+    prompt: &str,
+    available_crates: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+
+    let mut in_fenced = false;
+    for line in prompt.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fenced = !in_fenced;
+            continue;
+        }
+
+        if in_fenced {
+            // Inside fenced code block — check entire line
+            check_line_for_crates(line, available_crates, &mut found);
+        } else {
+            // Check inline backtick regions
+            let mut rest = line;
+            while let Some(start) = rest.find('`') {
+                rest = &rest[start + 1..];
+                if let Some(end) = rest.find('`') {
+                    let code = &rest[..end];
+                    check_line_for_crates(code, available_crates, &mut found);
+                    rest = &rest[end + 1..];
+                } else {
+                    break;
+                }
+            }
+
+            // Check for Rust path patterns: `foo::` or `::foo`
+            check_rust_paths(line, available_crates, &mut found);
+        }
+    }
+
+    found.into_iter().collect()
+}
+
+fn check_line_for_crates(
+    code: &str,
+    available_crates: &std::collections::BTreeSet<String>,
+    found: &mut std::collections::BTreeSet<String>,
+) {
+    for crate_name in available_crates {
+        if code.contains(crate_name.as_str()) && is_word_boundary_match(code, crate_name) {
+            found.insert(crate_name.clone());
+        }
+    }
+}
+
+fn check_rust_paths(
+    line: &str,
+    available_crates: &std::collections::BTreeSet<String>,
+    found: &mut std::collections::BTreeSet<String>,
+) {
+    for crate_name in available_crates {
+        let path_prefix = format!("{crate_name}::");
+        let path_suffix = format!("::{crate_name}");
+        if line.contains(&path_prefix) || line.contains(&path_suffix) {
+            found.insert(crate_name.clone());
+        }
+    }
+}
+
+fn is_word_boundary_match(text: &str, name: &str) -> bool {
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(name) {
+        let abs_pos = start + pos;
+        let before_ok = abs_pos == 0 || {
+            let b = text.as_bytes()[abs_pos - 1];
+            !b.is_ascii_alphanumeric() && b != b'_'
+        };
+        let after_pos = abs_pos + name.len();
+        let after_ok = after_pos >= text.len() || {
+            let b = text.as_bytes()[after_pos];
+            !b.is_ascii_alphanumeric() && b != b'_'
+        };
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs_pos + 1;
+    }
+    false
+}
+
+/// Dispatch plugin hooks (spawn subprocesses).
+fn dispatch_plugin_hooks(sym: &Symposium, payload: &HookPayload) {
+    let plugins = crate::plugins::load_all_plugins(sym);
+    let hooks = hooks_for_payload(&plugins, payload);
 
     for (plugin_name, hook) in hooks {
         tracing::info!(?plugin_name, hook = %hook.name, cmd = %hook.command, "running plugin hook");
@@ -112,8 +389,6 @@ pub async fn dispatch_hook(payload: HookPayload) -> ExitCode {
             Err(e) => tracing::warn!(error = %e, "failed to spawn hook command"),
         }
     }
-
-    ExitCode::SUCCESS
 }
 
 /// Return all hooks (with their plugin name) that match the event in `payload`.
@@ -175,13 +450,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path();
 
-        // Point HOME to our temp dir so plugins_dir() is under it.
-        unsafe {
-            std::env::set_var("HOME", home);
-        }
+        let sym = Symposium::from_dir(home);
 
         // Ensure plugins dir exists and get its path.
-        let plugins_dir = crate::config::plugins_dir();
+        let plugins_dir = sym.plugins_dir();
 
         // Prepare two output files that the hooks will create.
         let out1 = home.join("out1.txt");
@@ -236,14 +508,14 @@ mod tests {
         fs::write(plugins_dir.join("plugin-one.toml"), p1).expect("write plugin1");
         fs::write(plugins_dir.join("plugin-two.toml"), p2).expect("write plugin2");
 
-        // Run the hook event. This will spawn the commands which create the files.
+        // Run the hook event via dispatch_plugin_hooks.
         let payload = HookPayload {
             sub_payload: HookSubPayload::PreToolUse(PreToolUsePayload {
                 tool_name: "Bash".to_string(),
             }),
             rest: serde_json::Map::new(),
         };
-        let _ = dispatch_hook(payload).await;
+        dispatch_plugin_hooks(&sym, &payload);
 
         // Verify files were created and contain expected contents.
         let got1 = fs::read_to_string(&out1).expect("read out1");
@@ -258,5 +530,240 @@ mod tests {
 
         // No file created, matcher doesn't match
         assert!(fs::read_to_string(&out5).is_err());
+    }
+
+    #[tokio::test]
+    async fn builtin_pre_tool_use_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sym = Symposium::from_dir(tmp.path());
+        let payload = HookPayload {
+            sub_payload: HookSubPayload::PreToolUse(PreToolUsePayload {
+                tool_name: "Bash".to_string(),
+            }),
+            rest: serde_json::Map::new(),
+        };
+        let output = dispatch_builtin(&sym, &payload).await;
+        assert!(output.hook_specific_output.is_none());
+    }
+
+    #[tokio::test]
+    async fn builtin_post_tool_use_returns_empty_for_now() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sym = Symposium::from_dir(tmp.path());
+        let payload = HookPayload {
+            sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
+                tool_name: "Bash".to_string(),
+                tool_input: serde_json::json!({"command": "ls"}),
+                tool_response: serde_json::json!({"stdout": "file.rs"}),
+                session_id: Some("test-session".to_string()),
+                cwd: Some("/tmp".to_string()),
+            }),
+            rest: serde_json::Map::new(),
+        };
+        let output = dispatch_builtin(&sym, &payload).await;
+        assert!(output.hook_specific_output.is_none());
+    }
+
+    #[tokio::test]
+    async fn builtin_user_prompt_submit_returns_empty_for_now() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sym = Symposium::from_dir(tmp.path());
+        let payload = HookPayload {
+            sub_payload: HookSubPayload::UserPromptSubmit(UserPromptSubmitPayload {
+                prompt: "Use tokio for async".to_string(),
+                session_id: Some("test-session".to_string()),
+                cwd: Some("/tmp".to_string()),
+            }),
+            rest: serde_json::Map::new(),
+        };
+        let output = dispatch_builtin(&sym, &payload).await;
+        assert!(output.hook_specific_output.is_none());
+    }
+
+    #[test]
+    fn hook_output_serializes_with_additional_context() {
+        let output = HookOutput::with_context("UserPromptSubmit", "Load tokio guidance".to_string());
+        let json = serde_json::to_value(&output).unwrap();
+        assert_eq!(
+            json["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
+        assert_eq!(
+            json["hookSpecificOutput"]["additionalContext"],
+            "Load tokio guidance"
+        );
+    }
+
+    #[test]
+    fn hook_output_empty_serializes_without_hook_specific() {
+        let output = HookOutput::empty();
+        let json = serde_json::to_value(&output).unwrap();
+        assert!(json.get("hookSpecificOutput").is_none());
+    }
+
+    // --- Activation detection unit tests ---
+
+    #[test]
+    fn detect_bash_crate_activation() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium crate tokio"}),
+            tool_response: serde_json::json!({"exit_code": 0, "stdout": "..."}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), Some("tokio".to_string()));
+    }
+
+    #[test]
+    fn detect_bash_crate_activation_with_version() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium crate serde --version 1.0"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), Some("serde".to_string()));
+    }
+
+    #[test]
+    fn detect_bash_crate_list_not_activation() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium crate --list"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), None);
+    }
+
+    #[test]
+    fn detect_bash_failed_not_activation() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium crate tokio"}),
+            tool_response: serde_json::json!({"exit_code": 1}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), None);
+    }
+
+    #[test]
+    fn detect_bash_crate_activation_with_script_name() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "symposium.sh crate tokio"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), Some("tokio".to_string()));
+    }
+
+    #[test]
+    fn detect_bash_crate_activation_with_path_prefix() {
+        let post = PostToolUsePayload {
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "/home/user/.local/bin/symposium.sh crate serde"}),
+            tool_response: serde_json::json!({"exit_code": 0}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_bash(&post), Some("serde".to_string()));
+    }
+
+    #[test]
+    fn detect_mcp_crate_activation() {
+        let post = PostToolUsePayload {
+            tool_name: "mcp__symposium__rust".to_string(),
+            tool_input: serde_json::json!({"args": ["crate", "tokio"]}),
+            tool_response: serde_json::json!({"output": "..."}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_mcp(&post), Some("tokio".to_string()));
+    }
+
+    #[test]
+    fn detect_mcp_crate_list_not_activation() {
+        let post = PostToolUsePayload {
+            tool_name: "mcp__symposium__rust".to_string(),
+            tool_input: serde_json::json!({"args": ["crate", "--list"]}),
+            tool_response: serde_json::json!({"output": "..."}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_mcp(&post), None);
+    }
+
+    // --- Crate mention detection tests ---
+
+    fn crate_set(names: &[&str]) -> std::collections::BTreeSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn extract_mentions_inline_backticks() {
+        let available = crate_set(&["tokio", "serde", "log"]);
+        let prompt = "I need to use `tokio` for async and `serde` for serialization";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["serde", "tokio"]);
+    }
+
+    #[test]
+    fn extract_mentions_fenced_code_block() {
+        let available = crate_set(&["tokio", "serde"]);
+        let prompt = "Here's the code:\n```rust\nuse tokio::runtime;\n```";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["tokio"]);
+    }
+
+    #[test]
+    fn extract_mentions_rust_path() {
+        let available = crate_set(&["tokio", "serde"]);
+        let prompt = "The function uses tokio::spawn to run tasks";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["tokio"]);
+    }
+
+    #[test]
+    fn extract_mentions_no_false_positive_plain_text() {
+        let available = crate_set(&["log", "time"]);
+        let prompt = "I want to log in to the server and it's time to deploy";
+        let found = extract_crate_mentions(prompt, &available);
+        // "log" and "time" in plain text should NOT match
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn extract_mentions_word_boundary() {
+        let available = crate_set(&["serde"]);
+        let prompt = "Check the `serde_json` crate";
+        let found = extract_crate_mentions(prompt, &available);
+        // "serde" inside "serde_json" should NOT match (underscore is word char)
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn extract_mentions_exact_backtick() {
+        let available = crate_set(&["serde"]);
+        let prompt = "Use `serde` for this";
+        let found = extract_crate_mentions(prompt, &available);
+        assert_eq!(found, vec!["serde"]);
+    }
+
+    #[test]
+    fn detect_mcp_start_not_activation() {
+        let post = PostToolUsePayload {
+            tool_name: "mcp__symposium__rust".to_string(),
+            tool_input: serde_json::json!({"args": ["start"]}),
+            tool_response: serde_json::json!({"output": "..."}),
+            session_id: Some("s1".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        assert_eq!(detect_crate_activation_mcp(&post), None);
     }
 }

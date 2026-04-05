@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::config::Symposium;
 use crate::git_source::UpdateLevel;
 use crate::hook::HookEvent;
 
@@ -20,16 +21,13 @@ pub struct PluginSource {
 /// A `[[skills]]` entry from a plugin manifest.
 ///
 /// Each group declares which crates it advises on (`crates`), workspace
-/// constraints (`applies-when`), an activation mode, and optionally a remote
+/// an activation mode, and optionally a remote
 /// source for the skill files.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillGroup {
     /// Crate predicates this group advises on (e.g., `"serde"` or `["serde", "serde_json>=1.0"]`).
     #[serde(default, deserialize_with = "deserialize_string_or_vec_opt")]
     pub crates: Option<Vec<crate::predicate::Predicate>>,
-    /// Workspace constraints: all listed predicates must match (AND semantics).
-    #[serde(default, rename = "applies-when")]
-    pub applies_when: Option<Vec<crate::predicate::Predicate>>,
     /// Activation mode for skills in this group.
     pub activation: Option<crate::skills::Activation>,
     /// Remote source for skills.
@@ -170,8 +168,8 @@ struct PluginManifest {
 /// `update` controls freshness checking behavior (see `UpdateLevel`).
 /// Only refreshes sources with `auto-update = true` (unless `update` is `Fetch`).
 /// Path-based sources are skipped (no fetching needed).
-pub async fn ensure_plugin_sources(update: UpdateLevel) {
-    let sources = crate::config::plugin_sources();
+pub async fn ensure_plugin_sources(sym: &Symposium, update: UpdateLevel) {
+    let sources = sym.plugin_sources();
 
     for source in &sources {
         if !matches!(update, UpdateLevel::Fetch) && !source.auto_update {
@@ -186,7 +184,7 @@ pub async fn ensure_plugin_sources(update: UpdateLevel) {
 
         tracing::debug!(source = %source.name, url = %git_url, "ensuring plugin source");
 
-        match fetch_plugin_source(git_url, update).await {
+        match fetch_plugin_source(sym, git_url, update).await {
             Ok(path) => {
                 tracing::debug!(source = %source.name, path = %path.display(), "plugin source ready");
             }
@@ -201,16 +199,16 @@ pub async fn ensure_plugin_sources(update: UpdateLevel) {
 /// discarding load errors with warnings.
 ///
 /// Use `load_registry()` instead if you also need standalone skills.
-pub fn load_all_plugins() -> Vec<ParsedPlugin> {
-    load_registry().plugins
+pub fn load_all_plugins(sym: &Symposium) -> Vec<ParsedPlugin> {
+    load_registry(sym).plugins
 }
 
 /// Sync plugin sources.
 ///
 /// If `provider` is Some, sync only that provider (ignores auto-update).
 /// If `provider` is None, sync all sources with auto-update = true.
-pub async fn sync_plugin_source(provider: Option<&str>) -> Result<Vec<String>> {
-    let sources = crate::config::plugin_sources();
+pub async fn sync_plugin_source(sym: &Symposium, provider: Option<&str>) -> Result<Vec<String>> {
+    let sources = sym.plugin_sources();
     let mut synced = Vec::new();
 
     for source in &sources {
@@ -225,7 +223,7 @@ pub async fn sync_plugin_source(provider: Option<&str>) -> Result<Vec<String>> {
 
         if let Some(ref git_url) = source.git {
             tracing::debug!(source = %source.name, url = %git_url, "syncing plugin source");
-            match fetch_plugin_source(git_url, UpdateLevel::Fetch).await {
+            match fetch_plugin_source(sym, git_url, UpdateLevel::Fetch).await {
                 Ok(path) => {
                     tracing::info!(source = %source.name, path = %path.display(), "synced");
                     synced.push(source.name.clone());
@@ -243,12 +241,12 @@ pub async fn sync_plugin_source(provider: Option<&str>) -> Result<Vec<String>> {
 }
 
 /// List all providers and their plugins.
-pub fn list_plugins() -> Vec<ProviderInfo> {
-    let sources = crate::config::plugin_sources();
+pub fn list_plugins(sym: &Symposium) -> Vec<ProviderInfo> {
+    let sources = sym.plugin_sources();
     let mut providers = Vec::new();
 
     for source in &sources {
-        let source_path = resolve_plugin_source_dir(source);
+        let source_path = resolve_plugin_source_dir(sym, source);
         let plugins: Vec<PluginInfo> = source_path
             .and_then(|p| scan_source_dir(&p).ok())
             .map(|c| c.plugins)
@@ -275,11 +273,11 @@ pub fn list_plugins() -> Vec<ProviderInfo> {
 }
 
 /// Find a plugin by name across all sources.
-pub fn find_plugin(name: &str) -> Option<ParsedPlugin> {
-    let sources = crate::config::plugin_sources();
+pub fn find_plugin(sym: &Symposium, name: &str) -> Option<ParsedPlugin> {
+    let sources = sym.plugin_sources();
 
     for source in &sources {
-        let source_path = resolve_plugin_source_dir(source);
+        let source_path = resolve_plugin_source_dir(sym, source);
         if let Some(ref path) = source_path {
             if let Ok(contents) = scan_source_dir(path) {
                 for result in contents.plugins {
@@ -301,10 +299,10 @@ pub fn find_plugin(name: &str) -> Option<ParsedPlugin> {
 /// For `git` sources: computes the cache path under `~/.symposium/cache/plugin-sources/`.
 ///
 /// Does no network I/O — just computes paths.
-fn resolve_plugin_source_dirs() -> Vec<PathBuf> {
-    let sources = crate::config::plugin_sources();
-    let config_dir = crate::config::config_dir();
-    let cache_base = crate::config::cache_dir().join("plugin-sources");
+fn resolve_plugin_source_dirs(sym: &Symposium) -> Vec<PathBuf> {
+    let sources = sym.plugin_sources();
+    let config_dir = sym.config_dir();
+    let cache_base = sym.cache_dir().join("plugin-sources");
 
     let mut dirs = Vec::new();
     for source in &sources {
@@ -329,9 +327,9 @@ fn resolve_plugin_source_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn resolve_plugin_source_dir(source: &crate::config::PluginSourceConfig) -> Option<PathBuf> {
-    let config_dir = crate::config::config_dir();
-    let cache_base = crate::config::cache_dir().join("plugin-sources");
+fn resolve_plugin_source_dir(sym: &Symposium, source: &crate::config::PluginSourceConfig) -> Option<PathBuf> {
+    let config_dir = sym.config_dir();
+    let cache_base = sym.cache_dir().join("plugin-sources");
 
     if let Some(ref path) = source.path {
         let p = PathBuf::from(path);
@@ -352,11 +350,11 @@ fn resolve_plugin_source_dir(source: &crate::config::PluginSourceConfig) -> Opti
 }
 
 /// Fetch a plugin source repository, returning the cached directory path.
-async fn fetch_plugin_source(git_url: &str, update: UpdateLevel) -> Result<PathBuf> {
+async fn fetch_plugin_source(sym: &Symposium, git_url: &str, update: UpdateLevel) -> Result<PathBuf> {
     use crate::git_source;
 
     let source = git_source::parse_github_url(git_url)?;
-    let cache_mgr = git_source::PluginCacheManager::new("plugin-sources");
+    let cache_mgr = git_source::PluginCacheManager::new(sym, "plugin-sources");
     cache_mgr.get_or_fetch(&source, git_url, update).await
 }
 
@@ -364,11 +362,11 @@ async fn fetch_plugin_source(git_url: &str, update: UpdateLevel) -> Result<PathB
 ///
 /// Discovers TOML plugin manifests and standalone skill directories,
 /// then loads both into a `PluginRegistry`.
-pub fn load_registry() -> PluginRegistry {
+pub fn load_registry(sym: &Symposium) -> PluginRegistry {
     let mut plugins = Vec::new();
     let mut standalone_skills = Vec::new();
 
-    for dir in resolve_plugin_source_dirs() {
+    for dir in resolve_plugin_source_dirs(sym) {
         match scan_source_dir(&dir) {
             Ok(contents) => {
                 for result in contents.plugins {
@@ -522,7 +520,7 @@ pub fn validate_source_dir(dir: &Path) -> Result<Vec<ValidationResult>> {
 
 /// Collect all crate names referenced in predicates across a plugin source directory.
 ///
-/// Scans TOML plugin manifests (skill group `crates`/`applies-when`) and
+/// Scans TOML plugin manifests (skill group `crates`) and
 /// standalone SKILL.md files, returning deduplicated crate names.
 /// Items that fail to load are silently skipped.
 pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
@@ -536,20 +534,12 @@ pub fn collect_crate_names_in_source_dir(dir: &Path) -> Result<Vec<String>> {
                     pred.collect_crate_names(&mut names);
                 }
             }
-            if let Some(preds) = &group.applies_when {
-                for pred in preds {
-                    pred.collect_crate_names(&mut names);
-                }
-            }
         }
     }
 
     for skill_md in contents.skill_files {
         if let Ok(skill) = crate::skills::load_standalone_skill(&skill_md) {
             for pred in &skill.crates {
-                pred.collect_crate_names(&mut names);
-            }
-            for pred in &skill.applies_when {
                 pred.collect_crate_names(&mut names);
             }
         }
@@ -632,7 +622,6 @@ mod tests {
 
             [[skills]]
             crates = ["serde"]
-            applies-when = ["serde>=1.0"]
             source.git = "https://github.com/org/repo/tree/main/serde"
         "#};
         let plugin = from_str(toml).expect("parse");
@@ -642,9 +631,6 @@ mod tests {
         let cr = group.crates.as_ref().unwrap();
         assert_eq!(cr.len(), 1);
         assert!(cr[0].references_crate("serde"));
-        let aw = group.applies_when.as_ref().unwrap();
-        assert_eq!(aw.len(), 1);
-        assert!(aw[0].references_crate("serde"));
         assert_eq!(
             group.source.git.as_ref().map(|s| s.as_str()),
             Some("https://github.com/org/repo/tree/main/serde")
@@ -826,7 +812,6 @@ mod tests {
 
                 [[skills]]
                 crates = ["serde", "serde_json>=1.0"]
-                applies-when = ["tokio>=1.0"]
             "#},
         )
         .unwrap();
@@ -840,7 +825,6 @@ mod tests {
                 ---
                 name: my-skill
                 crates: anyhow
-                applies-when: tracing
                 ---
 
                 Body.
@@ -850,10 +834,7 @@ mod tests {
 
         let names = collect_crate_names_in_source_dir(dir).unwrap();
         // BTreeSet means sorted output
-        assert_eq!(
-            names,
-            vec!["anyhow", "serde", "serde_json", "tokio", "tracing"]
-        );
+        assert_eq!(names, vec!["anyhow", "serde", "serde_json"]);
     }
 
     #[test]
@@ -913,11 +894,9 @@ mod tests {
 
             [[skills]]
             crates = ["serde"]
-            applies-when = ["serde>=1.0"]
 
             [[skills]]
             crates = ["tokio"]
-            applies-when = ["tokio>=1.0"]
         "#};
         let plugin = from_str(toml).expect("parse");
         assert_eq!(plugin.name, "multi-group");
