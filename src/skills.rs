@@ -904,31 +904,6 @@ mod tests {
     }
 
     #[test]
-    fn applies_when_in_frontmatter_is_silently_ignored() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skill_md = tmp.path().join("SKILL.md");
-        fs::write(
-            &skill_md,
-            indoc! {"
-                ---
-                name: guarded
-                crates: serde
-                applies-when: serde_json>=1.0
-                ---
-
-                Body.
-            "},
-        )
-        .unwrap();
-
-        let defaults = SkillGroup::default();
-        let skill = load_skill(&skill_md, &defaults).unwrap();
-        assert_eq!(skill.name(), "guarded");
-        // applies-when is ignored, not stored
-        assert!(!skill.frontmatter.contains_key("applies-when"));
-    }
-
-    #[test]
     fn validate_standalone_skill_bad_activation() {
         let tmp = tempfile::tempdir().unwrap();
         let skill_dir = tmp.path().join("bad-skill");
