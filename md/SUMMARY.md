@@ -15,7 +15,7 @@
 
 # User's guide
 
-- [Getting started](./install.md)
+- [Installing Symposium](./install.md)
 - [Usage patterns](./usage-patterns.md)
 
 # For crate authors
@@ -32,9 +32,17 @@
 - [Skill definition](./reference/skill-definition.md)
 - [Skill matching](./reference/skill-matching.md)
 
-# Design
+# Contribution guide
 
-- [Current status](./design/current-status.md)
-- [Overview](./design/overview.md)
-- [Implementation overview](./design/implementation-overview.md)
+- [Welcome](./design/welcome.md)
+- [Key repositories](./design/repositories.md)
+- [Key modules](./design/module-structure.md)
+- [State](./design/state.md)
+  - [Session state](./design/session-state.md)
+- [Important flows](./design/important-flows.md)
+  - [Symposium start](./design/symposium-start-flow.md)
+  - [Skill nudges](./design/skill-nudge-flow.md)
+  - [Cargo workflow](./design/cargo-workflow-flow.md)
+- [Integration test harness](./design/test-harness.md)
+- [Governance](./design/governance.md)
 - [Common issues](./design/common-issues.md)
