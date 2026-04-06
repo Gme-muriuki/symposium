@@ -430,6 +430,9 @@ async fn dispatch_plugin_hooks(sym: &Symposium, payload: &HookPayload) -> Plugin
     PluginHookOutput::Success(output_json)
 }
 
+/// Recursively merge two JSON objects, with `b` taking precedence over `a`.
+/// Fields with null values in `b` will delete the corresponding field in `a`.
+/// Fields not present in `b` will be left unchanged in `a`.
 fn merge(a: &mut serde_json::Value, b: serde_json::Value) {
     if let serde_json::Value::Object(a) = a {
         if let serde_json::Value::Object(b) = b {
@@ -501,6 +504,7 @@ mod tests {
             .try_init();
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn plugin_hooks_run_and_create_files() {
         setup_tracing();
@@ -824,6 +828,8 @@ mod tests {
         };
         assert_eq!(detect_crate_activation_mcp(&post), None);
     }
+
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn hook_stdout_is_merged_on_success() {
         setup_tracing();
@@ -871,6 +877,7 @@ mod tests {
         assert_eq!(val.get("b").and_then(|v| v.as_i64()), Some(2));
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn hooks_exit_2_fail_fast_and_return_stderr() {
         setup_tracing();
