@@ -2,15 +2,41 @@
 
 use serde::{Deserialize, Serialize};
 
-// FIXME: We really need a "core" set of hook events and expected data. But then
-// have "adapters" for each different agent. The interesting bit is connecting
-// builtin hooks (which should handle the core set of events) to the agent-specific
-// formats.
-// 
-/// For now, this is very much designed around Claude Code's expected hook payloads.
+use anyhow::{Result, anyhow};
+use std::{any::Any, fmt::Debug};
+
+use crate::config::Symposium;
+
+pub mod claude;
+pub mod copilot;
+pub mod gemini;
+
+/// Agents supported by Symposium hooks.
+#[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HookAgent {
+    #[value(name = "claude")]
+    #[serde(rename = "claude")]
+    Claude,
+    #[value(name = "copilot")]
+    #[serde(rename = "copilot")]
+    Copilot,
+    #[value(name = "gemini")]
+    #[serde(rename = "gemini")]
+    Gemini,
+}
+
+impl HookAgent {
+    pub fn event(&self, event: HookEvent) -> Option<Box<dyn ErasedAgentHookEvent>> {
+        match self {
+            HookAgent::Claude => claude::ClaudeCode.event(event),
+            HookAgent::Copilot => copilot::Copilot.event(event),
+            HookAgent::Gemini => gemini::Gemini.event(event),
+        }
+    }
+}
 
 /// Hook event types supported by Symposium.
-#[derive(Debug, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HookEvent {
     #[value(name = "pre-tool-use")]
     #[serde(rename = "PreToolUse")]
@@ -133,6 +159,8 @@ pub struct HookOutput {
     /// If set, injected into the LLM conversation as additional context.
     #[serde(rename = "hookSpecificOutput", skip_serializing_if = "Option::is_none")]
     pub hook_specific_output: Option<HookSpecificOutput>,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +169,10 @@ pub struct HookSpecificOutput {
     pub hook_event_name: String,
     #[serde(rename = "additionalContext", skip_serializing_if = "Option::is_none")]
     pub additional_context: Option<String>,
+    #[serde(rename = "updatedInput", skip_serializing_if = "Option::is_none")]
+    pub updated_input: Option<String>,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
 }
 
 impl HookOutput {
@@ -150,7 +182,10 @@ impl HookOutput {
             hook_specific_output: Some(HookSpecificOutput {
                 hook_event_name: event_name.to_string(),
                 additional_context: Some(context),
+                updated_input: None,
+                rest: serde_json::Map::new(),
             }),
+            rest: serde_json::Map::new(),
         }
     }
 
@@ -158,4 +193,143 @@ impl HookOutput {
     pub fn empty() -> Self {
         Self::default()
     }
+}
+
+/// Represents the data sent *from* an agent *to* a hook.
+pub trait AgentHookPayload: Debug {
+    /// Parse an incoming JSON payload string into a concrete payload struct.
+    fn parse_payload(payload: &str) -> Result<Self>
+    where
+        Self: Sized;
+    /// Convert this payload into the generic `HookPayload` for builtin hook handlers.
+    fn to_hook_payload(&self) -> HookPayload;
+    /// Convert this payload into a JSON string for forwarding to plugins.
+    fn to_string(&self) -> Result<String>;
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
+/// Represents the data sent *from* a hook *to* an agent.
+pub trait AgentHookOutput: Debug {
+    /// Parse raw stdout bytes from a hook handler into a concrete output struct.
+    fn parse_output(output: &[u8]) -> anyhow::Result<Self>
+    where
+        Self: Sized;
+    /// Convert a generic `HookOutput` from builtin hook handlers into this output struct.
+    fn from_hook_output(output: &HookOutput) -> anyhow::Result<Self>
+    where
+        Self: Sized;
+    /// Convert this output into a JSON value to return to the agent.
+    fn to_hook_output(&self) -> serde_json::Value;
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
+/// Represents some hook event-handler for a specific agent
+pub trait AgentHookEvent {
+    type Payload: AgentHookPayload;
+    type Output: AgentHookOutput;
+
+    /// Parse an incoming JSON payload string into a concrete payload struct.
+    fn parse_payload(&self, payload: &str) -> anyhow::Result<Self::Payload> {
+        Self::Payload::parse_payload(payload)
+    }
+    /// Parse raw stdout bytes from a hook handler into a concrete output struct.
+    fn parse_output(&self, output: &[u8]) -> anyhow::Result<Self::Output> {
+        Self::Output::parse_output(output)
+    }
+    /// Convert a generic `HookOutput` from builtin hook handlers into this output struct.
+    fn from_hook_output(&self, output: &HookOutput) -> anyhow::Result<Self::Output> {
+        Self::Output::from_hook_output(output)
+    }
+    fn merge_outputs(first: Self::Output, second: Self::Output) -> Self::Output;
+    fn dispatch_plugin_hooks(
+        &self,
+        sym: &Symposium,
+        payload: &Self::Payload,
+        prior_output: Self::Output,
+    ) -> crate::hook::PluginHookOutput
+    where
+        Self: Sized,
+    {
+        crate::hook::dispatch_plugin_hooks::<Self>(sym, self, payload, prior_output)
+    }
+}
+
+/// Represents an agent that can handle hook events.
+pub trait Agent {
+    fn event(&self, event: HookEvent) -> Option<Box<dyn ErasedAgentHookEvent>>;
+}
+
+pub trait ErasedAgentHookEvent {
+    /// Parse an incoming JSON payload into a boxed `AgentHookPayload`.
+    fn parse_payload(&self, payload: &str) -> Result<Box<dyn AgentHookPayload>>;
+
+    /// Parses a stdout into a boxed `AgentHookOutput`.
+    fn parse_output(&self, output: &[u8]) -> Result<Box<dyn AgentHookOutput>>;
+
+    /// Parse a builtin `HookOutput` into a boxed `AgentHookOutput`.
+    fn from_hook_output(&self, output: &HookOutput) -> Result<Box<dyn AgentHookOutput>>;
+
+    fn dispatch_plugin_hooks(
+        &self,
+        _sym: &Symposium,
+        payload: Box<dyn AgentHookPayload>,
+        prior_output: Box<dyn AgentHookOutput>,
+    ) -> crate::hook::PluginHookOutput;
+}
+
+struct ErasedAgentHookEventImpl<E: AgentHookEvent + 'static>(E);
+
+impl<E> ErasedAgentHookEvent for ErasedAgentHookEventImpl<E>
+where
+    E: AgentHookEvent + 'static,
+    E::Payload: AgentHookPayload + 'static,
+    E::Output: AgentHookOutput + 'static,
+{
+    fn parse_payload(&self, payload: &str) -> Result<Box<dyn AgentHookPayload>> {
+        let p = self.0.parse_payload(payload)?;
+        Ok(Box::new(p))
+    }
+
+    fn parse_output(&self, output: &[u8]) -> Result<Box<dyn AgentHookOutput>> {
+        let o = self.0.parse_output(output)?;
+        Ok(Box::new(o))
+    }
+    fn from_hook_output(&self, output: &HookOutput) -> Result<Box<dyn AgentHookOutput>> {
+        let o = self.0.from_hook_output(output)?;
+        Ok(Box::new(o))
+    }
+
+    fn dispatch_plugin_hooks(
+        &self,
+        _sym: &Symposium,
+        payload: Box<dyn AgentHookPayload>,
+        prior_output: Box<dyn AgentHookOutput>,
+    ) -> crate::hook::PluginHookOutput {
+        let payload_any = payload.into_any();
+        let payload_concrete = payload_any
+            .downcast::<E::Payload>()
+            .map_err(|_| anyhow!("failed to downcast payload"))
+            .unwrap();
+        let output_any = prior_output.into_any();
+        let output_concrete = output_any
+            .downcast::<E::Output>()
+            .map_err(|_| anyhow!("failed to downcast output"))
+            .unwrap();
+        let output = self
+            .0
+            .dispatch_plugin_hooks(_sym, &payload_concrete, *output_concrete);
+        output
+    }
+}
+
+/// Helper to erase a concrete `AgentHookEvent` into a trait object.
+pub fn erase_agent_hook_event<E>(e: E) -> Box<dyn ErasedAgentHookEvent>
+where
+    E: AgentHookEvent + 'static,
+    E::Payload: AgentHookPayload + 'static,
+    E::Output: AgentHookOutput + 'static,
+{
+    Box::new(ErasedAgentHookEventImpl(e))
 }
