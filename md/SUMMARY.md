@@ -27,6 +27,10 @@
 
 # Reference
 
+- [The `cargo agents` command](./reference/cargo-agents.md)
+  - [`cargo agents init`](./reference/cargo-agents-init.md)
+  - [`cargo agents sync`](./reference/cargo-agents-sync.md)
+  - [`cargo agents hook`](./reference/cargo-agents-hook.md)
 - [Configuration](./reference/configuration.md)
 - [Plugin definition](./reference/plugin-definition.md)
 - [Skill definition](./reference/skill-definition.md)
@@ -37,6 +41,7 @@
 - [Welcome](./design/welcome.md)
 - [Key repositories](./design/repositories.md)
 - [Key modules](./design/module-structure.md)
+- [Configuration loading](./design/configuration-loading.md)
 - [State](./design/state.md)
   - [Session state](./design/session-state.md)
 - [Important flows](./design/important-flows.md)
