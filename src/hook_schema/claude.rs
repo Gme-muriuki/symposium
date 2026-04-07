@@ -22,18 +22,6 @@ impl AgentHookEvent for ClaudePreToolUseEvent {
     type Payload = ClaudeCodePreToolUsePayload;
     type Output = ClaudeCodePreToolUseOutput;
 
-    fn parse_payload(&self, payload: &str) -> anyhow::Result<Self::Payload> {
-        ClaudeCodePreToolUsePayload::parse_payload(payload)
-    }
-
-    fn parse_output(&self, output: &[u8]) -> anyhow::Result<Self::Output> {
-        ClaudeCodePreToolUseOutput::parse_output(output)
-    }
-
-    fn from_hook_output(&self, output: &HookOutput) -> anyhow::Result<Self::Output> {
-        ClaudeCodePreToolUseOutput::from_hook_output(output)
-    }
-
     fn merge_outputs(first: Self::Output, second: Self::Output) -> Self::Output {
         let mut first = serde_json::to_value(first).unwrap();
         let second = serde_json::to_value(second).unwrap();
@@ -116,8 +104,8 @@ pub struct ClaudeHookSpecificOutput {
     pub rest: serde_json::Map<String, serde_json::Value>,
 }
 
-impl ClaudeCodePreToolUseOutput {
-    pub fn new() -> Self {
+impl Default for ClaudeCodePreToolUseOutput {
+    fn default() -> Self {
         Self {
             do_continue: None,
             stop_reason: None,
@@ -145,7 +133,7 @@ impl AgentHookOutput for ClaudeCodePreToolUseOutput {
     }
 
     fn from_hook_output(payload: &HookOutput) -> anyhow::Result<Self> {
-        let mut out = Self::new();
+        let mut out = Self::default();
         out.rest = payload.rest.clone();
         if let Some(hook_specific) = &payload.hook_specific_output {
             if hook_specific.hook_event_name != "PreToolUse" {

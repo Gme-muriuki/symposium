@@ -22,18 +22,6 @@ impl AgentHookEvent for GeminiPreToolUseEvent {
     type Payload = GeminiBeforeToolPayload;
     type Output = GeminiBeforeToolUseOutput;
 
-    fn parse_payload(&self, payload: &str) -> anyhow::Result<Self::Payload> {
-        GeminiBeforeToolPayload::parse_payload(payload)
-    }
-
-    fn parse_output(&self, output: &[u8]) -> anyhow::Result<Self::Output> {
-        GeminiBeforeToolUseOutput::parse_output(output)
-    }
-
-    fn from_hook_output(&self, output: &HookOutput) -> anyhow::Result<Self::Output> {
-        GeminiBeforeToolUseOutput::from_hook_output(output)
-    }
-
     fn merge_outputs(first: Self::Output, second: Self::Output) -> Self::Output {
         let mut first = serde_json::to_value(first).unwrap();
         let second = serde_json::to_value(second).unwrap();
@@ -145,8 +133,8 @@ pub struct InnerHookSpecificOutput {
     pub rest: serde_json::Map<String, serde_json::Value>,
 }
 
-impl GeminiBeforeToolUseOutput {
-    pub fn new() -> Self {
+impl Default for GeminiBeforeToolUseOutput {
+    fn default() -> Self {
         Self {
             decision: None,
             reason: None,
