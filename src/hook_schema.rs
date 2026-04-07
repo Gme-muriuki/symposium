@@ -26,11 +26,11 @@ pub enum HookAgent {
 }
 
 impl HookAgent {
-    pub fn agent(&self) -> Box<dyn Agent> {
+    pub fn event(&self, event: HookEvent) -> Option<Box<dyn ErasedAgentHookEvent>> {
         match self {
-            HookAgent::Claude => Box::new(claude::ClaudeCode),
-            HookAgent::Copilot => Box::new(copilot::Copilot),
-            HookAgent::Gemini => Box::new(gemini::Gemini),
+            HookAgent::Claude => claude::ClaudeCode.event(event),
+            HookAgent::Copilot => copilot::Copilot.event(event),
+            HookAgent::Gemini => gemini::Gemini.event(event),
         }
     }
 }
@@ -195,34 +195,53 @@ impl HookOutput {
     }
 }
 
+/// Represents the data sent *from* an agent *to* a hook.
 pub trait AgentHookPayload: Debug {
+    /// Parse an incoming JSON payload string into a concrete payload struct.
     fn parse_payload(payload: &str) -> Result<Self>
     where
         Self: Sized;
+    /// Convert this payload into the generic `HookPayload` for builtin hook handlers.
     fn to_hook_payload(&self) -> HookPayload;
+    /// Convert this payload into a JSON string for forwarding to plugins.
     fn to_string(&self) -> Result<String>;
 
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
+/// Represents the data sent *from* a hook *to* an agent.
 pub trait AgentHookOutput: Debug {
+    /// Parse raw stdout bytes from a hook handler into a concrete output struct.
     fn parse_output(output: &[u8]) -> anyhow::Result<Self>
     where
         Self: Sized;
+    /// Convert a generic `HookOutput` from builtin hook handlers into this output struct.
     fn from_hook_output(output: &HookOutput) -> anyhow::Result<Self>
     where
         Self: Sized;
+    /// Convert this output into a JSON value to return to the agent.
     fn to_hook_output(&self) -> serde_json::Value;
 
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
+/// Represents some hook event-handler for a specific agent
 pub trait AgentHookEvent {
     type Payload: AgentHookPayload;
     type Output: AgentHookOutput;
-    fn parse_payload(&self, payload: &str) -> anyhow::Result<Self::Payload>;
-    fn parse_output(&self, output: &[u8]) -> anyhow::Result<Self::Output>;
-    fn from_hook_output(&self, output: &HookOutput) -> anyhow::Result<Self::Output>;
+
+    /// Parse an incoming JSON payload string into a concrete payload struct.
+    fn parse_payload(&self, payload: &str) -> anyhow::Result<Self::Payload> {
+        Self::Payload::parse_payload(payload)
+    }
+    /// Parse raw stdout bytes from a hook handler into a concrete output struct.
+    fn parse_output(&self, output: &[u8]) -> anyhow::Result<Self::Output> {
+        Self::Output::parse_output(output)
+    }
+    /// Convert a generic `HookOutput` from builtin hook handlers into this output struct.
+    fn from_hook_output(&self, output: &HookOutput) -> anyhow::Result<Self::Output> {
+        Self::Output::from_hook_output(output)
+    }
     fn merge_outputs(first: Self::Output, second: Self::Output) -> Self::Output;
     fn dispatch_plugin_hooks(
         &self,
@@ -237,6 +256,7 @@ pub trait AgentHookEvent {
     }
 }
 
+/// Represents an agent that can handle hook events.
 pub trait Agent {
     fn event(&self, event: HookEvent) -> Option<Box<dyn ErasedAgentHookEvent>>;
 }

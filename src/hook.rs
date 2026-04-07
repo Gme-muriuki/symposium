@@ -19,7 +19,6 @@ pub use crate::hook_schema::{
 pub async fn run(sym: &Symposium, agent: HookAgent, event: HookEvent) -> ExitCode {
     tracing::debug!("Running hook listener for agent {agent:?} and event {event:?}");
 
-    let agent = agent.agent();
     let event_handler = agent.event(event).unwrap();
 
     let mut input = String::new();
@@ -604,10 +603,10 @@ mod tests {
             tool_name: "Bash".to_string(),
             rest: serde_json::Map::new(),
         };
-        let _ = event_handler.dispatch_plugin_hooks(
+            let _ = event_handler.dispatch_plugin_hooks(
             &sym,
             Box::new(payload),
-            Box::new(ClaudeCodePreToolUseOutput::new()),
+            Box::new(ClaudeCodePreToolUseOutput::default()),
         );
 
         // Verify files were created and contain expected contents.
@@ -923,7 +922,7 @@ mod tests {
         let out = event_handler.dispatch_plugin_hooks(
             &sym,
             Box::new(payload),
-            Box::new(ClaudeCodePreToolUseOutput::new()),
+            Box::new(ClaudeCodePreToolUseOutput::default()),
         );
 
         // Expect overall success and merged JSON containing both keys
@@ -982,7 +981,7 @@ mod tests {
         let out = event_handler.dispatch_plugin_hooks(
             &sym,
             Box::new(payload),
-            Box::new(ClaudeCodePreToolUseOutput::new()),
+            Box::new(ClaudeCodePreToolUseOutput::default()),
         );
 
         // Expect failure and stderr containing our message

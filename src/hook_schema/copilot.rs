@@ -22,18 +22,6 @@ impl AgentHookEvent for CopilotPreToolUseEvent {
     type Payload = CopilotPreToolUsePayload;
     type Output = CopilotPreToolUseOutput;
 
-    fn parse_payload(&self, payload: &str) -> anyhow::Result<Self::Payload> {
-        CopilotPreToolUsePayload::parse_payload(payload)
-    }
-
-    fn parse_output(&self, output: &[u8]) -> anyhow::Result<Self::Output> {
-        CopilotPreToolUseOutput::parse_output(output)
-    }
-
-    fn from_hook_output(&self, output: &HookOutput) -> anyhow::Result<Self::Output> {
-        CopilotPreToolUseOutput::from_hook_output(output)
-    }
-
     fn merge_outputs(first: Self::Output, second: Self::Output) -> Self::Output {
         let mut first = serde_json::to_value(first).unwrap();
         let second = serde_json::to_value(second).unwrap();
@@ -103,8 +91,8 @@ pub struct CopilotPreToolUseOutput {
     pub rest: serde_json::Map<String, serde_json::Value>,
 }
 
-impl CopilotPreToolUseOutput {
-    pub fn new() -> Self {
+impl Default for CopilotPreToolUseOutput {
+    fn default() -> Self {
         Self {
             permission_decision: None,
             permission_decision_reason: None,
@@ -126,7 +114,7 @@ impl AgentHookOutput for CopilotPreToolUseOutput {
 
     fn from_hook_output(payload: &HookOutput) -> anyhow::Result<Self> {
         // Map our internal HookOutput to the Copilot output shape.
-        let mut out = CopilotPreToolUseOutput::new();
+        let mut out = CopilotPreToolUseOutput::default();
         if let Some(ref hook_specific) = payload.hook_specific_output {
             out.additional_context = hook_specific.additional_context.clone();
             // merge any hookSpecific.rest into out.rest
