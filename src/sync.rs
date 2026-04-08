@@ -208,6 +208,14 @@ pub fn add_agent(project_root: &Path, agent_name: &str, out: &Output) -> Result<
     Ok(())
 }
 
+/// Remove an agent from the project config.
+pub fn remove_agent(project_root: &Path, agent_name: &str, out: &Output) -> Result<()> {
+    let agent = Agent::from_config_name(agent_name)?;
+    ProjectConfig::remove_agent(project_root, agent_name)?;
+    out.removed(format!("removed agent {} ({})", agent_name, agent.display_name()));
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Skill installation
 // ---------------------------------------------------------------------------

@@ -52,6 +52,10 @@ pub enum Commands {
         /// Skips the interactive prompt.
         #[arg(long = "add-agent")]
         agents: Vec<String>,
+
+        /// Remove an agent. Repeatable.
+        #[arg(long = "remove-agent")]
+        remove_agents: Vec<String>,
     },
 
     /// Synchronize configuration with workspace dependencies and agent
@@ -67,6 +71,10 @@ pub enum Commands {
         /// Add an agent to the project config. Repeatable.
         #[arg(long = "add-agent", value_name = "NAME")]
         add_agents: Vec<String>,
+
+        /// Remove an agent from the project config. Repeatable.
+        #[arg(long = "remove-agent", value_name = "NAME")]
+        remove_agents: Vec<String>,
     },
 
     /// Hook entry point invoked by your agent (internal)
@@ -130,8 +138,9 @@ pub async fn run(sym: &mut Symposium, cmd: Commands, cwd: &Path, out: &Output) -
             user,
             project,
             agents,
+            remove_agents,
         } => {
-            let opts = InitOpts { agents };
+            let opts = InitOpts { agents, remove_agents };
             if user && !project {
                 init::init_user(sym, out, &opts).await
             } else if project && !user {
@@ -145,9 +154,13 @@ pub async fn run(sym: &mut Symposium, cmd: Commands, cwd: &Path, out: &Output) -
             workspace,
             agent,
             add_agents,
+            remove_agents,
         } => {
             for name in &add_agents {
                 sync::add_agent(cwd, name, out)?;
+            }
+            for name in &remove_agents {
+                sync::remove_agent(cwd, name, out)?;
             }
 
             let do_workspace = workspace || (!workspace && !agent);

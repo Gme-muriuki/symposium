@@ -296,6 +296,27 @@ impl ProjectConfig {
         fs::write(&path, doc.to_string())?;
         Ok(())
     }
+
+    /// Format-preserving removal of an `[[agent]]` entry.
+    /// No-op if the agent is not present.
+    pub fn remove_agent(project_root: &Path, agent_name: &str) -> anyhow::Result<()> {
+        let path = Self::path(project_root);
+        let contents = fs::read_to_string(&path).unwrap_or_default();
+        let mut doc: toml_edit::DocumentMut = contents
+            .parse()
+            .unwrap_or_else(|_| toml_edit::DocumentMut::new());
+
+        if let Some(agents) = doc.get_mut("agent").and_then(|v| v.as_array_of_tables_mut()) {
+            agents.retain(|t| {
+                t.get("name")
+                    .and_then(|v| v.as_str())
+                    .map_or(true, |n| n != agent_name)
+            });
+        }
+
+        fs::write(&path, doc.to_string())?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

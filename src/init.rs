@@ -15,6 +15,8 @@ use crate::output::{Output, display_path};
 pub struct InitOpts {
     /// Agent names provided via `--add-agent`. If non-empty, skips the agent prompt.
     pub agents: Vec<String>,
+    /// Agent names to remove via `--remove-agent`.
+    pub remove_agents: Vec<String>,
 }
 
 /// Whether we can prompt the user interactively.
@@ -23,19 +25,35 @@ fn interactive() -> bool {
 }
 
 /// Resolve which agents to configure. Priority:
-/// 1. Explicit `--add-agent` flags
+/// 1. Explicit `--add-agent` / `--remove-agent` flags (applied to existing set)
 /// 2. Interactive multi-select (if terminal), pre-selecting existing agents
 /// 3. Default to first agent (Claude) in non-interactive mode
 fn resolve_user_agents(opts: &InitOpts, existing: &[AgentEntry]) -> Result<Vec<Agent>> {
-    if !opts.agents.is_empty() {
-        return opts
-            .agents
-            .iter()
-            .map(|n| Agent::from_config_name(n))
-            .collect();
+    if !opts.agents.is_empty() || !opts.remove_agents.is_empty() {
+        // Start from existing agents
+        let mut names: Vec<String> = existing.iter().map(|e| e.name.clone()).collect();
+        // Add new ones
+        for name in &opts.agents {
+            Agent::from_config_name(name)?; // validate
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        // Remove specified ones
+        for name in &opts.remove_agents {
+            Agent::from_config_name(name)?; // validate
+            names.retain(|n| n != name);
+        }
+        return names.iter().map(|n| Agent::from_config_name(n)).collect();
     }
     if interactive() {
         return prompt_for_agents(existing);
+    }
+    if !existing.is_empty() {
+        return existing
+            .iter()
+            .map(|e| Agent::from_config_name(&e.name))
+            .collect();
     }
     Ok(vec![Agent::all()[0]])
 }
