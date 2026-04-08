@@ -100,16 +100,28 @@ pub async fn dispatch_builtin(sym: &Symposium, payload: &HookPayload) -> HookOut
         }
         HookSubPayload::PostToolUse(post) => handle_post_tool_use(sym, post).await,
         HookSubPayload::UserPromptSubmit(prompt) => handle_user_prompt_submit(sym, prompt).await,
-        HookSubPayload::SessionStart(_) => handle_session_start(sym),
+        HookSubPayload::SessionStart(session) => handle_session_start(sym, session),
     }
 }
 
 /// Handle SessionStart: collect `session-start-context` from all plugins and return as context.
-fn handle_session_start(sym: &Symposium) -> HookOutput {
-    let plugins = crate::plugins::load_all_plugins(sym);
+fn handle_session_start(sym: &Symposium, payload: &SessionStartPayload) -> HookOutput {
+    // Load project config if we have a cwd, so project-level plugins are included
+    let project_root = payload
+        .cwd
+        .as_deref()
+        .map(std::path::Path::new)
+        .filter(|p| p.join(".cargo-agents").is_dir());
+    let project_config = project_root.and_then(crate::config::ProjectConfig::load);
+
+    let registry = crate::plugins::load_registry_with(
+        sym,
+        project_config.as_ref(),
+        project_root,
+    );
 
     let mut context_parts: Vec<String> = Vec::new();
-    for crate::plugins::ParsedPlugin { path: _, plugin } in &plugins {
+    for crate::plugins::ParsedPlugin { path: _, plugin } in &registry.plugins {
         if let Some(ref ctx) = plugin.session_start_context {
             context_parts.push(ctx.clone());
         }

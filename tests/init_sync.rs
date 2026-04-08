@@ -263,3 +263,123 @@ async fn init_project_with_agent_sets_override() {
     "#]]
     .assert_eq(&read_project_config(&ctx));
 }
+
+/// Project-level plugin source with session-start-context is loaded during hooks.
+#[tokio::test]
+async fn project_plugin_source_loaded_in_hooks() {
+    let mut ctx = cargo_agents_testlib::with_fixture(&["plugins0", "workspace0"]);
+
+    ctx.cargo_agents(&["init", "--user", "--agent", "claude"])
+        .await
+        .unwrap();
+    ctx.cargo_agents(&["init", "--project"]).await.unwrap();
+
+    let workspace_root = ctx.workspace_root.clone().unwrap();
+
+    // Create a project-local plugin directory with a session-start plugin
+    let plugin_dir = workspace_root.join("my-plugins");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("project-guidance.toml"),
+        r#"
+name = "project-guidance"
+session-start-context = "Always run `cargo test` before committing."
+"#,
+    )
+    .unwrap();
+
+    // Add the plugin source to the project config
+    let config_path = workspace_root.join(".cargo-agents").join("config.toml");
+    let contents = std::fs::read_to_string(&config_path).unwrap();
+    // Remove the empty `plugin-source = []` so we can use [[plugin-source]] table array syntax
+    let contents = contents.replace("plugin-source = []", "");
+    let contents = format!(
+        "{contents}\n[[plugin-source]]\nname = \"project-local\"\npath = \"my-plugins\"\n"
+    );
+    std::fs::write(&config_path, &contents).unwrap();
+
+    // Invoke session start hook — should pick up the project plugin
+    use cargo_agents::hook::SessionStartPayload;
+    let output = ctx
+        .invoke_hook(SessionStartPayload {
+            session_id: Some("s1".to_string()),
+            cwd: Some(workspace_root.to_string_lossy().to_string()),
+        })
+        .await;
+
+    let context = output
+        .hook_specific_output
+        .as_ref()
+        .and_then(|h| h.additional_context.as_deref())
+        .unwrap_or("");
+
+    assert!(
+        context.contains("Always run `cargo test` before committing."),
+        "should include project plugin context, got: {context}"
+    );
+}
+
+/// Self-contained project excludes user-level plugin sources.
+#[tokio::test]
+async fn self_contained_excludes_user_plugins() {
+    let mut ctx = cargo_agents_testlib::with_fixture(&["plugins0", "workspace0"]);
+
+    ctx.cargo_agents(&["init", "--user", "--agent", "claude"])
+        .await
+        .unwrap();
+    ctx.cargo_agents(&["init", "--project"]).await.unwrap();
+
+    let workspace_root = ctx.workspace_root.clone().unwrap();
+
+    // Create a project-local plugin with its own session-start-context
+    let plugin_dir = workspace_root.join("project-plugins");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("only-this.toml"),
+        r#"
+name = "only-this"
+session-start-context = "Project-only guidance."
+"#,
+    )
+    .unwrap();
+
+    // Set self-contained = true and add project plugin source
+    let config_path = workspace_root.join(".cargo-agents").join("config.toml");
+    let contents = std::fs::read_to_string(&config_path).unwrap();
+    // Remove defaults so we can rewrite them, and the empty plugin-source array
+    let contents = contents
+        .replace("self-contained = false", "self-contained = true")
+        .replace("plugin-source = []", "");
+    let contents = format!(
+        "{contents}\n[defaults]\nsymposium-recommendations = false\nuser-plugins = false\n\n\
+         [[plugin-source]]\nname = \"project-only\"\npath = \"project-plugins\"\n"
+    );
+    std::fs::write(&config_path, &contents).unwrap();
+
+    // Invoke session start hook
+    use cargo_agents::hook::SessionStartPayload;
+    let output = ctx
+        .invoke_hook(SessionStartPayload {
+            session_id: Some("s1".to_string()),
+            cwd: Some(workspace_root.to_string_lossy().to_string()),
+        })
+        .await;
+
+    let context = output
+        .hook_specific_output
+        .as_ref()
+        .and_then(|h| h.additional_context.as_deref())
+        .unwrap_or("");
+
+    // Should contain the project plugin context
+    assert!(
+        context.contains("Project-only guidance."),
+        "should include project plugin context, got: {context}"
+    );
+
+    // Should NOT contain user-level plugin context (the session-start.toml from plugins0)
+    assert!(
+        !context.contains("cargo agents start"),
+        "self-contained should exclude user plugins, got: {context}"
+    );
+}
