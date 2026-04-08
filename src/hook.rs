@@ -11,8 +11,8 @@ use crate::{
 
 // Re-export hook schema types for convenience.
 pub use crate::hook_schema::{
-    HookAgent, HookEvent, HookOutput, HookPayload, HookSpecificOutput, HookSubPayload, PostToolUsePayload,
-    PreToolUsePayload, UserPromptSubmitPayload,
+    HookAgent, HookEvent, HookOutput, HookPayload, HookSpecificOutput, HookSubPayload,
+    PostToolUsePayload, PreToolUsePayload, SessionStartPayload, UserPromptSubmitPayload,
 };
 
 /// CLI entry point: read payload from stdin, dispatch, print output.
@@ -100,6 +100,26 @@ pub async fn dispatch_builtin(sym: &Symposium, payload: &HookPayload) -> HookOut
         }
         HookSubPayload::PostToolUse(post) => handle_post_tool_use(sym, post).await,
         HookSubPayload::UserPromptSubmit(prompt) => handle_user_prompt_submit(sym, prompt).await,
+        HookSubPayload::SessionStart(_) => handle_session_start(sym),
+    }
+}
+
+/// Handle SessionStart: collect `session-start-context` from all plugins and return as context.
+fn handle_session_start(sym: &Symposium) -> HookOutput {
+    let plugins = crate::plugins::load_all_plugins(sym);
+
+    let mut context_parts: Vec<String> = Vec::new();
+    for crate::plugins::ParsedPlugin { path: _, plugin } in &plugins {
+        if let Some(ref ctx) = plugin.session_start_context {
+            context_parts.push(ctx.clone());
+        }
+    }
+
+    if context_parts.is_empty() {
+        HookOutput::empty()
+    } else {
+        let context = context_parts.join("\n\n");
+        HookOutput::with_context("SessionStart", context)
     }
 }
 

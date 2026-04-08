@@ -100,6 +100,9 @@ pub struct Plugin {
     pub installation: Option<Installation>,
     pub hooks: Vec<Hook>,
     pub skills: Vec<SkillGroup>,
+    /// Text to inject as additional context at session start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_start_context: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -159,6 +162,8 @@ struct PluginManifest {
     hooks: Vec<Hook>,
     #[serde(default)]
     skills: Vec<SkillGroup>,
+    #[serde(default, rename = "session-start-context")]
+    session_start_context: Option<String>,
 }
 
 /// Fetch/update git-based plugin sources.
@@ -582,6 +587,7 @@ pub fn load_plugin(manifest_path: &Path) -> Result<ParsedPlugin> {
             installation: manifest.installation,
             hooks: manifest.hooks,
             skills: manifest.skills,
+            session_start_context: manifest.session_start_context,
         },
     })
 }
@@ -598,6 +604,7 @@ mod tests {
             installation: manifest.installation,
             hooks: manifest.hooks,
             skills: manifest.skills,
+            session_start_context: manifest.session_start_context,
         })
     }
 

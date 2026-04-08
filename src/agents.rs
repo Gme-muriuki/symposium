@@ -152,7 +152,7 @@ fn register_claude_hooks(settings_path: &Path, out: &Output) -> Result<()> {
 
     let mut added = Vec::new();
 
-    for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
+    for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"] {
         let command = format!("cargo agents hook claude {}", event_to_cli_arg(event));
         if ensure_claude_hook_entry(hooks_obj, event, &command) {
             added.push(event);
@@ -242,6 +242,11 @@ fn register_copilot_hooks(hooks_dir: &Path, out: &Output) -> Result<()> {
                 "type": "command",
                 "bash": "cargo agents hook copilot user-prompt-submit",
                 "timeoutSec": 10
+            }],
+            "sessionStart": [{
+                "type": "command",
+                "bash": "cargo agents hook copilot session-start",
+                "timeoutSec": 10
             }]
         }
     });
@@ -272,6 +277,7 @@ fn register_gemini_hooks(settings_path: &Path, out: &Output) -> Result<()> {
     let events = [
         ("BeforeTool", "pre-tool-use"),
         ("AfterTool", "post-tool-use"),
+        ("SessionStart", "session-start"),
     ];
 
     for (gemini_event, cli_arg) in events {
@@ -341,6 +347,7 @@ fn event_to_cli_arg(event: &str) -> &str {
         "PreToolUse" => "pre-tool-use",
         "PostToolUse" => "post-tool-use",
         "UserPromptSubmit" => "user-prompt-submit",
+        "SessionStart" | "sessionStart" => "session-start",
         other => other,
     }
 }

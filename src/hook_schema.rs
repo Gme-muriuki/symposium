@@ -49,6 +49,10 @@ pub enum HookEvent {
     #[value(name = "user-prompt-submit")]
     #[serde(rename = "UserPromptSubmit")]
     UserPromptSubmit,
+
+    #[value(name = "session-start")]
+    #[serde(rename = "SessionStart")]
+    SessionStart,
 }
 
 /// Top-level hook payload, as received on stdin.
@@ -75,6 +79,9 @@ pub enum HookSubPayload {
 
     #[serde(rename = "UserPromptSubmit")]
     UserPromptSubmit(UserPromptSubmitPayload),
+
+    #[serde(rename = "SessionStart")]
+    SessionStart(SessionStartPayload),
 }
 
 impl HookPayload {
@@ -86,6 +93,7 @@ impl HookPayload {
         match &self.sub_payload {
             HookSubPayload::PostToolUse(p) => p.cwd.as_deref(),
             HookSubPayload::UserPromptSubmit(p) => p.cwd.as_deref(),
+            HookSubPayload::SessionStart(p) => p.cwd.as_deref(),
             HookSubPayload::PreToolUse(_) => None,
         }
         .or_else(|| self.rest.get("cwd").and_then(|v| v.as_str()))
@@ -98,6 +106,7 @@ impl HookSubPayload {
             HookSubPayload::PreToolUse(_) => HookEvent::PreToolUse,
             HookSubPayload::PostToolUse(_) => HookEvent::PostToolUse,
             HookSubPayload::UserPromptSubmit(_) => HookEvent::UserPromptSubmit,
+            HookSubPayload::SessionStart(_) => HookEvent::SessionStart,
         }
     }
 
@@ -109,6 +118,7 @@ impl HookSubPayload {
             HookSubPayload::PreToolUse(payload) => matcher.contains(&payload.tool_name),
             HookSubPayload::PostToolUse(payload) => matcher.contains(&payload.tool_name),
             HookSubPayload::UserPromptSubmit(_) => true,
+            HookSubPayload::SessionStart(_) => true,
         }
     }
 }
@@ -139,6 +149,14 @@ pub struct UserPromptSubmitPayload {
     pub cwd: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStartPayload {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
 impl From<HookSubPayload> for HookPayload {
     fn from(sub_payload: HookSubPayload) -> Self {
         Self {
@@ -163,6 +181,12 @@ impl From<PostToolUsePayload> for HookPayload {
 impl From<UserPromptSubmitPayload> for HookPayload {
     fn from(payload: UserPromptSubmitPayload) -> Self {
         HookSubPayload::UserPromptSubmit(payload).into()
+    }
+}
+
+impl From<SessionStartPayload> for HookPayload {
+    fn from(payload: SessionStartPayload) -> Self {
+        HookSubPayload::SessionStart(payload).into()
     }
 }
 
