@@ -312,6 +312,45 @@ async fn removing_agent_removes_hooks() {
     );
 }
 
+/// `--add-agent` is additive to existing agents.
+///
+/// Init with claude, then add gemini. Both should be configured.
+#[tokio::test]
+async fn add_agent_is_additive() {
+    let mut ctx = symposium_testlib::with_fixture(&["plugins0"]);
+
+    // Init with claude
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
+        .await
+        .unwrap();
+
+    // Add gemini (should keep claude)
+    ctx.symposium(&["init", "--user", "--add-agent", "gemini"])
+        .await
+        .unwrap();
+
+    // Both should be configured
+    let config = symposium::config::Symposium::from_dir(ctx.sym.config_dir());
+    let agent_names: Vec<_> = config.config.agents.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(agent_names, vec!["claude", "gemini"]);
+
+    // Both should have hooks
+    let claude_settings = ctx.sym.home_dir().join(".claude").join("settings.json");
+    let gemini_settings = ctx.sym.home_dir().join(".gemini").join("settings.json");
+    assert!(
+        std::fs::read_to_string(&claude_settings)
+            .unwrap()
+            .contains("symposium hook"),
+        "claude should still have hooks"
+    );
+    assert!(
+        std::fs::read_to_string(&gemini_settings)
+            .unwrap()
+            .contains("symposium hook"),
+        "gemini should have hooks"
+    );
+}
+
 /// Project-level plugin source with session-start-context is loaded during hooks.
 ///
 /// Uses `project-plugins0` fixture which has:

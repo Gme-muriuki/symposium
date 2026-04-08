@@ -59,16 +59,23 @@ fn resolve_user_agents(opts: &InitOpts, existing: &[AgentEntry]) -> Result<Vec<A
 }
 
 /// Resolve which agents to add at the project level. Priority:
-/// 1. Explicit `--add-agent` flags → add those agents
+/// 1. Explicit `--add-agent` / `--remove-agent` flags (applied to existing set)
 /// 2. Interactive prompt (if terminal)
 /// 3. No project agents in non-interactive mode
-fn resolve_project_agents(opts: &InitOpts) -> Result<Vec<Agent>> {
-    if !opts.agents.is_empty() {
-        return opts
-            .agents
-            .iter()
-            .map(|n| Agent::from_config_name(n))
-            .collect();
+fn resolve_project_agents(opts: &InitOpts, existing: &[AgentEntry]) -> Result<Vec<Agent>> {
+    if !opts.agents.is_empty() || !opts.remove_agents.is_empty() {
+        let mut names: Vec<String> = existing.iter().map(|e| e.name.clone()).collect();
+        for name in &opts.agents {
+            Agent::from_config_name(name)?;
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        for name in &opts.remove_agents {
+            Agent::from_config_name(name)?;
+            names.retain(|n| n != name);
+        }
+        return names.iter().map(|n| Agent::from_config_name(n)).collect();
     }
     if interactive() {
         return prompt_for_project_agents();
@@ -130,7 +137,7 @@ pub async fn init_project(
     if config_dir.join("config.toml").exists() {
         out.already_ok(".symposium/config.toml already exists, syncing");
     } else {
-        let project_agents = resolve_project_agents(opts)?;
+        let project_agents = resolve_project_agents(opts, &[])?;
 
         let config = ProjectConfig {
             agents: project_agents
