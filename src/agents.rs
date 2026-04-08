@@ -113,7 +113,7 @@ impl Agent {
                 register_claude_hooks(&home.join(".claude").join("settings.json"), out)
             }
             Agent::Copilot => {
-                register_copilot_hooks(&home.join(".copilot").join("config.json"), out)
+                register_copilot_hooks_global(&home.join(".copilot").join("config.json"), out)
             }
             Agent::Gemini => {
                 register_gemini_hooks(&home.join(".gemini").join("settings.json"), out)
@@ -212,6 +212,49 @@ fn ensure_claude_hook_entry(
 // GitHub Copilot hook registration
 // ---------------------------------------------------------------------------
 
+/// Register hooks in the global Copilot config file (`~/.copilot/config.json`).
+fn register_copilot_hooks_global(config_path: &Path, out: &Output) -> Result<()> {
+    let display = display_path(config_path);
+    let mut config = load_json_or_empty(config_path)?;
+
+    let hooks = config
+        .as_object_mut()
+        .unwrap()
+        .entry("hooks")
+        .or_insert_with(|| json!({}));
+
+    let hooks_obj = hooks.as_object_mut().unwrap();
+
+    // Check if already registered
+    let already = hooks_obj.values().any(|arr| {
+        arr.as_array().map_or(false, |a| {
+            a.iter().any(|h| {
+                h.get("bash")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.starts_with("symposium hook"))
+            })
+        })
+    });
+
+    if already {
+        out.already_ok(format!("{display}: hooks already registered"));
+        return Ok(());
+    }
+
+    let copilot_hooks = copilot_hook_entries();
+    for (event, entry) in copilot_hooks {
+        let arr = hooks_obj.entry(event).or_insert_with(|| json!([]));
+        if let Some(a) = arr.as_array_mut() {
+            a.push(entry);
+        }
+    }
+
+    save_json(config_path, &config)?;
+    out.done(format!("{display}: added hooks"));
+    Ok(())
+}
+
+/// Register hooks in a project-level Copilot hooks directory (`.github/hooks/`).
 fn register_copilot_hooks(hooks_dir: &Path, out: &Output) -> Result<()> {
     fs::create_dir_all(hooks_dir)?;
     let hook_file = hooks_dir.join("symposium.json");
@@ -225,35 +268,45 @@ fn register_copilot_hooks(hooks_dir: &Path, out: &Output) -> Result<()> {
         }
     }
 
+    let mut hooks_obj = serde_json::Map::new();
+    for (event, entry) in copilot_hook_entries() {
+        hooks_obj.insert(event.to_string(), json!([entry]));
+    }
+
     let hooks = json!({
         "version": 1,
-        "hooks": {
-            "preToolUse": [{
-                "type": "command",
-                "bash": "symposium hook copilot pre-tool-use",
-                "timeoutSec": 10
-            }],
-            "postToolUse": [{
-                "type": "command",
-                "bash": "symposium hook copilot post-tool-use",
-                "timeoutSec": 10
-            }],
-            "userPromptSubmitted": [{
-                "type": "command",
-                "bash": "symposium hook copilot user-prompt-submit",
-                "timeoutSec": 10
-            }],
-            "sessionStart": [{
-                "type": "command",
-                "bash": "symposium hook copilot session-start",
-                "timeoutSec": 10
-            }]
-        }
+        "hooks": hooks_obj
     });
 
     save_json(&hook_file, &hooks)?;
-    out.done(format!("{display}: added hooks (preToolUse, postToolUse, userPromptSubmitted)"));
+    out.done(format!("{display}: added hooks"));
     Ok(())
+}
+
+/// Copilot hook entries shared by global and project registration.
+fn copilot_hook_entries() -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        ("preToolUse", json!({
+            "type": "command",
+            "bash": "symposium hook copilot pre-tool-use",
+            "timeoutSec": 10
+        })),
+        ("postToolUse", json!({
+            "type": "command",
+            "bash": "symposium hook copilot post-tool-use",
+            "timeoutSec": 10
+        })),
+        ("userPromptSubmitted", json!({
+            "type": "command",
+            "bash": "symposium hook copilot user-prompt-submit",
+            "timeoutSec": 10
+        })),
+        ("sessionStart", json!({
+            "type": "command",
+            "bash": "symposium hook copilot session-start",
+            "timeoutSec": 10
+        })),
+    ]
 }
 
 // ---------------------------------------------------------------------------
