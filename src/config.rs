@@ -301,6 +301,7 @@ pub struct Symposium {
     pub config: Config,
     config_dir: PathBuf,
     cache_dir: PathBuf,
+    home_dir: PathBuf,
 }
 
 impl Symposium {
@@ -311,6 +312,7 @@ impl Symposium {
     /// 2. `XDG_CONFIG_HOME/cargo-agents`
     /// 3. `~/.cargo-agents`
     pub fn from_environment() -> Self {
+        let home_dir = dirs::home_dir().expect("could not determine home directory");
         let config_dir = resolve_config_dir_from_env();
         let _ = fs::create_dir_all(&config_dir);
 
@@ -323,6 +325,7 @@ impl Symposium {
             config,
             config_dir,
             cache_dir,
+            home_dir,
         }
     }
 
@@ -342,10 +345,15 @@ impl Symposium {
         };
         let _ = fs::create_dir_all(&cache_dir);
 
+        // In test mode, use the root as the home directory so that
+        // global hook registration writes into the tempdir.
+        let home_dir = root.to_path_buf();
+
         Self {
             config,
             config_dir,
             cache_dir,
+            home_dir,
         }
     }
 
@@ -382,6 +390,10 @@ impl Symposium {
 
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
+    }
+
+    pub fn home_dir(&self) -> &Path {
+        &self.home_dir
     }
 
     /// Returns the effective list of plugin sources, including built-in defaults.

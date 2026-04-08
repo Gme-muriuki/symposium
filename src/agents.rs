@@ -76,8 +76,7 @@ impl Agent {
     }
 
     /// Global skill directory for a given skill name, if supported.
-    pub fn global_skill_dir(&self, skill_name: &str) -> Option<PathBuf> {
-        let home = dirs::home_dir()?;
+    pub fn global_skill_dir(&self, home: &Path, skill_name: &str) -> Option<PathBuf> {
         match self {
             Agent::Claude => Some(home.join(".claude").join("skills").join(skill_name)),
             Agent::Copilot => None, // no global skills path
@@ -108,9 +107,7 @@ impl Agent {
     }
 
     /// Register hooks in the global agent config.
-    pub fn register_global_hooks(&self, out: &Output) -> Result<()> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
+    pub fn register_global_hooks(&self, home: &Path, out: &Output) -> Result<()> {
         match self {
             Agent::Claude => {
                 register_claude_hooks(&home.join(".claude").join("settings.json"), out)

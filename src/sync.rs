@@ -170,7 +170,7 @@ pub async fn sync_agent(
             agent.register_project_hooks(root, out)
                 .context("failed to register project hooks")?;
         } else {
-            agent.register_global_hooks(out)
+            agent.register_global_hooks(sym.home_dir(), out)
                 .context("failed to register global hooks")?;
         }
 
@@ -180,7 +180,7 @@ pub async fn sync_agent(
         }
     } else {
         // Outside a project: only register global hooks
-        agent.register_global_hooks(out)
+        agent.register_global_hooks(sym.home_dir(), out)
             .context("failed to register global hooks")?;
     }
 
