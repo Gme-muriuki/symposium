@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::agents::Agent;
-use crate::config::{ProjectConfig, Symposium, resolve_agent_name, resolve_sync_default};
+use crate::config::{ProjectConfig, Symposium, resolve_agents, resolve_sync_default};
 use crate::output::{Output, display_path};
 use crate::plugins;
 use crate::skills;
@@ -94,7 +94,7 @@ pub async fn sync_workspace(
     if !config_path.exists() {
         // First time: create the file with serde so we get a clean starting point
         let config = ProjectConfig {
-            agent: existing.agent.clone(),
+            agents: existing.agents.clone(),
             skills: merged_skills.clone(),
             workflows: existing.workflows.clone(),
             ..Default::default()
@@ -133,9 +133,10 @@ pub async fn sync_workspace(
 
     // Return the merged view
     Ok(ProjectConfig {
-        agent: existing.agent,
+        agents: existing.agents,
         skills: merged_skills,
         workflows: existing.workflows,
+        sync_default: existing.sync_default,
         self_contained: existing.self_contained,
         defaults: existing.defaults,
         plugin_source: existing.plugin_source,
@@ -146,54 +147,56 @@ pub async fn sync_workspace(
 // sync --agent
 // ---------------------------------------------------------------------------
 
-/// Install enabled extensions and register hooks for the agent.
+/// Install enabled extensions and register hooks for all configured agents.
 pub async fn sync_agent(
     sym: &Symposium,
     project_root: Option<&Path>,
     out: &Output,
 ) -> Result<()> {
     let project_config = project_root.and_then(ProjectConfig::load);
-    let agent_name = resolve_agent_name(&sym.config, project_config.as_ref())
-        .ok_or_else(|| anyhow::anyhow!(
-            "no agent configured — run `symposium init --user` first"
-        ))?;
-    let agent = Agent::from_config_name(&agent_name)?;
+    let agent_names = resolve_agents(&sym.config, project_config.as_ref());
 
-    if let Some(root) = project_root {
-        // Inside a project: register hooks and install skills
-        let project_config = project_config.as_ref();
-        let has_project_agent = project_config
-            .and_then(|c| c.agent.as_ref())
-            .and_then(|a| a.name.as_ref())
-            .is_some();
+    if agent_names.is_empty() {
+        out.info("no agents configured — run `symposium init --user` to add one");
+        return Ok(());
+    }
 
-        // Register hooks based on where the agent setting comes from
-        if has_project_agent {
-            agent.register_project_hooks(root, out)
-                .context("failed to register project hooks")?;
+    for agent_name in &agent_names {
+        let agent = Agent::from_config_name(agent_name)?;
+
+        if let Some(root) = project_root {
+            let project_config = project_config.as_ref();
+            let is_project_agent = project_config
+                .is_some_and(|c| c.agents.iter().any(|a| a.name == *agent_name));
+
+            // Register hooks based on where the agent comes from
+            if is_project_agent {
+                agent.register_project_hooks(root, out)
+                    .context("failed to register project hooks")?;
+            } else {
+                agent.register_global_hooks(sym.home_dir(), out)
+                    .context("failed to register global hooks")?;
+            }
+
+            // Install enabled skills
+            if let Some(ref config) = project_config {
+                install_skills(sym, agent, root, config, out).await?;
+            }
         } else {
+            // Outside a project: only register global hooks
             agent.register_global_hooks(sym.home_dir(), out)
                 .context("failed to register global hooks")?;
         }
-
-        // Install enabled skills
-        if let Some(ref config) = project_config {
-            install_skills(sym, agent, root, config, out).await?;
-        }
-    } else {
-        // Outside a project: only register global hooks
-        agent.register_global_hooks(sym.home_dir(), out)
-            .context("failed to register global hooks")?;
     }
 
     Ok(())
 }
 
-/// Set or change the project-level agent override.
-pub fn set_agent(project_root: &Path, agent_name: &str, out: &Output) -> Result<()> {
+/// Add an agent to the project config.
+pub fn add_agent(project_root: &Path, agent_name: &str, out: &Output) -> Result<()> {
     let agent = Agent::from_config_name(agent_name)?;
-    ProjectConfig::set_agent_name(project_root, agent_name)?;
-    out.done(format!("set project agent to {} ({})", agent_name, agent.display_name()));
+    ProjectConfig::add_agent(project_root, agent_name)?;
+    out.done(format!("added agent {} ({})", agent_name, agent.display_name()));
     Ok(())
 }
 

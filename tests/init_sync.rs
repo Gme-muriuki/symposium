@@ -31,20 +31,20 @@ fn read_project_config(ctx: &symposium_testlib::TestContext) -> String {
 async fn init_user_creates_config() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
 
     let config = symposium::config::Symposium::from_dir(ctx.sym.config_dir());
-    assert_eq!(config.config.agent.name.as_deref(), Some("claude"));
+    assert_eq!(config.config.agents.len(), 1);
 
     expect![[r#"
-        plugin-source = []
-
-        [agent]
-        name = "claude"
         sync-default = true
         auto-sync = false
+        plugin-source = []
+
+        [[agent]]
+        name = "claude"
 
         [logging]
         level = "info"
@@ -64,7 +64,7 @@ async fn init_user_creates_config() {
 async fn init_project_creates_config_and_discovers_skills() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0", "workspace0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
 
@@ -82,11 +82,13 @@ async fn init_project_creates_config_and_discovers_skills() {
     );
 
     expect![[r#"
+        sync-default = false
+        agent = []
         self-contained = false
         plugin-source = []
 
         [skills]
-        serde = true
+        serde = false
 
         [workflows]
     "#]]
@@ -98,7 +100,7 @@ async fn init_project_creates_config_and_discovers_skills() {
 async fn sync_workspace_preserves_existing_choices() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0", "workspace0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
     ctx.symposium(&["init", "--project"]).await.unwrap();
@@ -123,6 +125,8 @@ async fn sync_workspace_preserves_existing_choices() {
     );
 
     expect![[r#"
+        sync-default = false
+        agent = []
         self-contained = false
         plugin-source = []
 
@@ -139,7 +143,7 @@ async fn sync_workspace_preserves_existing_choices() {
 async fn sync_agent_installs_skills() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0", "workspace0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
     ctx.symposium(&["init", "--project"]).await.unwrap();
@@ -184,43 +188,43 @@ fn copilot_uses_vendor_neutral_skill_path() {
     );
 }
 
-/// `sync --set-agent` changes the project agent (format-preserving).
+/// `sync --add-agent` adds an agent to the project config.
 #[tokio::test]
-async fn sync_set_agent_changes_project_agent() {
+async fn sync_add_agent_to_project() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0", "workspace0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
-    ctx.symposium(&["init", "--project", "--agent", "claude"])
+    ctx.symposium(&["init", "--project", "--add-agent", "claude"])
         .await
         .unwrap();
 
     let workspace_root = ctx.workspace_root.clone().unwrap();
 
-    // Change agent to copilot
-    ctx.symposium(&["sync", "--set-agent", "copilot"])
+    // Add copilot alongside claude
+    ctx.symposium(&["sync", "--add-agent", "copilot"])
         .await
         .unwrap();
 
     let config =
         symposium::config::ProjectConfig::load(&workspace_root).expect("project config missing");
-    assert_eq!(
-        config.agent.as_ref().and_then(|a| a.name.as_deref()),
-        Some("copilot")
-    );
+    let agent_names: Vec<_> = config.agents.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(agent_names, vec!["claude", "copilot"]);
 
     expect![[r#"
+        sync-default = false
         self-contained = false
         plugin-source = []
 
-        [agent]
+        [[agent]]
+        name = "claude"
+
+        [[agent]]
         name = "copilot"
-        sync-default = true
-        auto-sync = false
 
         [skills]
-        serde = true
+        serde = false
 
         [workflows]
     "#]]
@@ -232,10 +236,10 @@ async fn sync_set_agent_changes_project_agent() {
 async fn init_project_with_agent_sets_override() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0", "workspace0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
-    ctx.symposium(&["init", "--project", "--agent", "gemini"])
+    ctx.symposium(&["init", "--project", "--add-agent", "gemini"])
         .await
         .unwrap();
 
@@ -243,21 +247,20 @@ async fn init_project_with_agent_sets_override() {
     let config =
         symposium::config::ProjectConfig::load(workspace_root).expect("project config missing");
     assert_eq!(
-        config.agent.as_ref().and_then(|a| a.name.as_deref()),
+        config.agents.first().map(|a| a.name.as_str()),
         Some("gemini")
     );
 
     expect![[r#"
+        sync-default = false
         self-contained = false
         plugin-source = []
 
-        [agent]
+        [[agent]]
         name = "gemini"
-        sync-default = true
-        auto-sync = false
 
         [skills]
-        serde = true
+        serde = false
 
         [workflows]
     "#]]
@@ -352,7 +355,7 @@ async fn self_contained_excludes_user_plugins() {
 async fn self_contained_excludes_user_skills_from_sync() {
     let mut ctx = symposium_testlib::with_fixture(&["plugins0", "project-self-contained0"]);
 
-    ctx.symposium(&["init", "--user", "--agent", "claude"])
+    ctx.symposium(&["init", "--user", "--add-agent", "claude"])
         .await
         .unwrap();
 

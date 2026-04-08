@@ -11,9 +11,17 @@ use tracing::Level;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    /// Agent preference and defaults.
-    #[serde(default)]
-    pub agent: AgentConfig,
+    /// Default on/off for newly discovered extensions.
+    #[serde(default = "default_true", rename = "sync-default")]
+    pub sync_default: bool,
+
+    /// Automatically run `sync --workspace` when Cargo.lock changes.
+    #[serde(default, rename = "auto-sync")]
+    pub auto_sync: bool,
+
+    /// Agents configured for this user.
+    #[serde(default, rename = "agent")]
+    pub agents: Vec<AgentEntry>,
 
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -34,29 +42,11 @@ pub struct Config {
     pub hooks: HooksConfig,
 }
 
-/// Agent preference and default behaviors.
+/// An `[[agent]]` entry — just identifies an agent by name.
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct AgentConfig {
-    /// Which agent the user uses (e.g., "claude", "copilot", "gemini").
-    pub name: Option<String>,
-
-    /// Default on/off for newly discovered extensions.
-    #[serde(default = "default_true", rename = "sync-default")]
-    pub sync_default: bool,
-
-    /// Automatically run `sync --workspace` when Cargo.lock changes.
-    #[serde(default, rename = "auto-sync")]
-    pub auto_sync: bool,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            name: None,
-            sync_default: true,
-            auto_sync: false,
-        }
-    }
+pub struct AgentEntry {
+    /// Agent name (e.g., "claude", "copilot", "gemini").
+    pub name: String,
 }
 
 /// Configuration for hook behavior.
@@ -97,7 +87,9 @@ impl Default for LoggingConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            agent: AgentConfig::default(),
+            sync_default: true,
+            auto_sync: false,
+            agents: Vec::new(),
             logging: LoggingConfig::default(),
             cache_dir: None,
             defaults: DefaultsConfig::default(),
@@ -154,11 +146,16 @@ pub struct PluginSourceConfig {
 /// Project-level configuration stored at `.symposium/config.toml`.
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ProjectConfig {
-    /// Optional project-level agent override.
-    #[serde(default)]
-    pub agent: Option<AgentConfig>,
+    /// Default on/off for newly discovered extensions (overrides user setting).
+    #[serde(default = "default_true", rename = "sync-default")]
+    pub sync_default: bool,
 
-    /// If true, ignore user-level plugin sources entirely.
+    /// Agents configured at the project level.
+    /// Unioned with user agents unless `self-contained = true`.
+    #[serde(default, rename = "agent")]
+    pub agents: Vec<AgentEntry>,
+
+    /// If true, ignore user-level plugin sources and agents entirely.
     /// The project's own defaults and plugin sources are still active.
     #[serde(default, rename = "self-contained")]
     pub self_contained: bool,
@@ -262,18 +259,37 @@ impl ProjectConfig {
         Ok(())
     }
 
-    /// Format-preserving update of `[agent] name`.
-    pub fn set_agent_name(project_root: &Path, agent_name: &str) -> anyhow::Result<()> {
+    /// Format-preserving addition of an `[[agent]]` entry.
+    /// No-op if the agent is already present.
+    pub fn add_agent(project_root: &Path, agent_name: &str) -> anyhow::Result<()> {
         let path = Self::path(project_root);
         let contents = fs::read_to_string(&path).unwrap_or_default();
         let mut doc: toml_edit::DocumentMut = contents
             .parse()
             .unwrap_or_else(|_| toml_edit::DocumentMut::new());
 
-        if !doc.contains_key("agent") {
-            doc["agent"] = toml_edit::Item::Table(toml_edit::Table::new());
+        // Check if already present
+        if let Some(agents) = doc.get("agent").and_then(|v| v.as_array_of_tables()) {
+            if agents.iter().any(|t| {
+                t.get("name")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|n| n == agent_name)
+            }) {
+                return Ok(());
+            }
         }
-        doc["agent"]["name"] = toml_edit::value(agent_name);
+
+        // Append new [[agent]] entry
+        let mut table = toml_edit::Table::new();
+        table["name"] = toml_edit::value(agent_name);
+
+        if let Some(arr) = doc.get_mut("agent").and_then(|v| v.as_array_of_tables_mut()) {
+            arr.push(table);
+        } else {
+            let mut arr = toml_edit::ArrayOfTables::new();
+            arr.push(table);
+            doc.insert("agent", toml_edit::Item::ArrayOfTables(arr));
+        }
 
         let dir = project_root.join(".symposium");
         fs::create_dir_all(&dir)?;
@@ -286,26 +302,41 @@ impl ProjectConfig {
 // Merged configuration view
 // ---------------------------------------------------------------------------
 
-/// Resolved agent name from merged user + project configs.
-pub fn resolve_agent_name(user: &Config, project: Option<&ProjectConfig>) -> Option<String> {
-    if let Some(proj) = project {
-        if let Some(ref agent) = proj.agent {
-            if agent.name.is_some() {
-                return agent.name.clone();
+/// Resolved agent names from merged user + project configs.
+///
+/// Returns a deduplicated list of agent names. When `self-contained` is false,
+/// user and project agents are unioned. When true, only project agents are used.
+pub fn resolve_agents(user: &Config, project: Option<&ProjectConfig>) -> Vec<String> {
+    let mut names = Vec::new();
+
+    let self_contained = project.is_some_and(|p| p.self_contained);
+
+    if !self_contained {
+        for entry in &user.agents {
+            if !names.contains(&entry.name) {
+                names.push(entry.name.clone());
             }
         }
     }
-    user.agent.name.clone()
+
+    if let Some(proj) = project {
+        for entry in &proj.agents {
+            if !names.contains(&entry.name) {
+                names.push(entry.name.clone());
+            }
+        }
+    }
+
+    names
 }
 
 /// Resolved sync-default from merged user + project configs.
+/// Project setting takes precedence if present.
 pub fn resolve_sync_default(user: &Config, project: Option<&ProjectConfig>) -> bool {
     if let Some(proj) = project {
-        if let Some(ref agent) = proj.agent {
-            return agent.sync_default;
-        }
+        return proj.sync_default;
     }
-    user.agent.sync_default
+    user.sync_default
 }
 
 /// A plugin source together with its base directory for resolving relative paths.
@@ -713,31 +744,37 @@ mod tests {
     }
 
     #[test]
-    fn parse_agent_config() {
+    fn parse_agents() {
         let config: Config = toml::from_str(indoc! {r#"
-            [agent]
-            name = "claude"
             sync-default = false
             auto-sync = true
+
+            [[agent]]
+            name = "claude"
+
+            [[agent]]
+            name = "copilot"
         "#})
         .unwrap();
-        assert_eq!(config.agent.name.as_deref(), Some("claude"));
-        assert!(!config.agent.sync_default);
-        assert!(config.agent.auto_sync);
+        assert_eq!(config.agents.len(), 2);
+        assert_eq!(config.agents[0].name, "claude");
+        assert_eq!(config.agents[1].name, "copilot");
+        assert!(!config.sync_default);
+        assert!(config.auto_sync);
     }
 
     #[test]
-    fn parse_agent_config_defaults() {
+    fn parse_config_defaults() {
         let config: Config = toml::from_str("").unwrap();
-        assert!(config.agent.name.is_none());
-        assert!(config.agent.sync_default); // default true
-        assert!(!config.agent.auto_sync); // default false
+        assert!(config.agents.is_empty());
+        assert!(config.sync_default); // default true
+        assert!(!config.auto_sync); // default false
     }
 
     #[test]
     fn parse_project_config() {
         let config: ProjectConfig = toml::from_str(indoc! {r#"
-            [agent]
+            [[agent]]
             name = "claude"
 
             [skills]
@@ -748,10 +785,8 @@ mod tests {
             rtk = true
         "#})
         .unwrap();
-        assert_eq!(
-            config.agent.as_ref().and_then(|a| a.name.as_deref()),
-            Some("claude")
-        );
+        assert_eq!(config.agents.len(), 1);
+        assert_eq!(config.agents[0].name, "claude");
         assert_eq!(config.skills.get("tokio"), Some(&true));
         assert_eq!(config.skills.get("serde"), Some(&false));
         assert_eq!(config.workflows.get("rtk"), Some(&true));
@@ -761,11 +796,7 @@ mod tests {
     fn project_config_save_load_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
         let config = ProjectConfig {
-            agent: Some(AgentConfig {
-                name: Some("claude".to_string()),
-                sync_default: true,
-                auto_sync: false,
-            }),
+            agents: vec![AgentEntry { name: "claude".to_string() }],
             skills: [("tokio".to_string(), true), ("serde".to_string(), false)]
                 .into_iter()
                 .collect(),
@@ -774,48 +805,64 @@ mod tests {
         };
         config.save(tmp.path()).unwrap();
         let loaded = ProjectConfig::load(tmp.path()).unwrap();
-        assert_eq!(
-            loaded.agent.as_ref().and_then(|a| a.name.as_deref()),
-            Some("claude")
-        );
+        assert_eq!(loaded.agents.len(), 1);
+        assert_eq!(loaded.agents[0].name, "claude");
         assert_eq!(loaded.skills.get("tokio"), Some(&true));
         assert_eq!(loaded.skills.get("serde"), Some(&false));
     }
 
     #[test]
-    fn resolve_agent_name_project_overrides_user() {
+    fn resolve_agents_unions_user_and_project() {
         let user = Config {
-            agent: AgentConfig {
-                name: Some("gemini".to_string()),
-                ..Default::default()
-            },
+            agents: vec![AgentEntry { name: "gemini".to_string() }],
             ..Config::default()
         };
         let project = ProjectConfig {
-            agent: Some(AgentConfig {
-                name: Some("claude".to_string()),
-                ..Default::default()
-            }),
+            agents: vec![AgentEntry { name: "claude".to_string() }],
             ..Default::default()
         };
-        assert_eq!(
-            resolve_agent_name(&user, Some(&project)),
-            Some("claude".to_string())
-        );
+        let agents = resolve_agents(&user, Some(&project));
+        assert_eq!(agents, vec!["gemini", "claude"]);
     }
 
     #[test]
-    fn resolve_agent_name_falls_back_to_user() {
+    fn resolve_agents_deduplicates() {
         let user = Config {
-            agent: AgentConfig {
-                name: Some("gemini".to_string()),
-                ..Default::default()
-            },
+            agents: vec![AgentEntry { name: "claude".to_string() }],
+            ..Config::default()
+        };
+        let project = ProjectConfig {
+            agents: vec![AgentEntry { name: "claude".to_string() }],
+            ..Default::default()
+        };
+        let agents = resolve_agents(&user, Some(&project));
+        assert_eq!(agents, vec!["claude"]);
+    }
+
+    #[test]
+    fn resolve_agents_self_contained_excludes_user() {
+        let user = Config {
+            agents: vec![AgentEntry { name: "gemini".to_string() }],
+            ..Config::default()
+        };
+        let project = ProjectConfig {
+            self_contained: true,
+            agents: vec![AgentEntry { name: "claude".to_string() }],
+            ..Default::default()
+        };
+        let agents = resolve_agents(&user, Some(&project));
+        assert_eq!(agents, vec!["claude"]);
+    }
+
+    #[test]
+    fn resolve_agents_falls_back_to_user() {
+        let user = Config {
+            agents: vec![AgentEntry { name: "gemini".to_string() }],
             ..Config::default()
         };
         assert_eq!(
-            resolve_agent_name(&user, None),
-            Some("gemini".to_string())
+            resolve_agents(&user, None),
+            vec!["gemini"]
         );
     }
 
@@ -879,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn set_agent_name_preserves_existing_content() {
+    fn add_agent_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join(".symposium");
         std::fs::create_dir_all(&dir).unwrap();
@@ -893,11 +940,25 @@ mod tests {
         )
         .unwrap();
 
-        ProjectConfig::set_agent_name(tmp.path(), "claude").unwrap();
+        ProjectConfig::add_agent(tmp.path(), "claude").unwrap();
 
         let result = std::fs::read_to_string(dir.join("config.toml")).unwrap();
         assert!(result.contains("# My project"));
         assert!(result.contains("tokio = true"));
         assert!(result.contains(r#"name = "claude""#));
+    }
+
+    #[test]
+    fn add_agent_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(".symposium");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "").unwrap();
+
+        ProjectConfig::add_agent(tmp.path(), "claude").unwrap();
+        ProjectConfig::add_agent(tmp.path(), "claude").unwrap();
+
+        let loaded = ProjectConfig::load(tmp.path()).unwrap();
+        assert_eq!(loaded.agents.len(), 1);
     }
 }

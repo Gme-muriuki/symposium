@@ -4,17 +4,17 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use dialoguer::{Confirm, Select};
+use dialoguer::{Confirm, MultiSelect};
 
 use crate::agents::Agent;
-use crate::config::{AgentConfig, ProjectConfig, Symposium};
+use crate::config::{AgentEntry, ProjectConfig, Symposium};
 use crate::output::{Output, display_path};
 
 /// Options that can be provided on the command line to skip interactive prompts.
 #[derive(Debug, Default)]
 pub struct InitOpts {
-    /// Agent name provided via `--agent`. If set, skips the agent prompt.
-    pub agent: Option<String>,
+    /// Agent names provided via `--add-agent`. If non-empty, skips the agent prompt.
+    pub agents: Vec<String>,
 }
 
 /// Whether we can prompt the user interactively.
@@ -22,58 +22,66 @@ fn interactive() -> bool {
     std::io::stdin().is_terminal()
 }
 
-/// Resolve which agent to use. Priority:
-/// 1. Explicit `--agent` flag
-/// 2. Interactive prompt (if terminal)
+/// Resolve which agents to configure. Priority:
+/// 1. Explicit `--add-agent` flags
+/// 2. Interactive multi-select (if terminal)
 /// 3. Default to first agent (Claude) in non-interactive mode
-fn resolve_agent(opts: &InitOpts) -> Result<Agent> {
-    if let Some(ref name) = opts.agent {
-        return Agent::from_config_name(name);
+fn resolve_user_agents(opts: &InitOpts) -> Result<Vec<Agent>> {
+    if !opts.agents.is_empty() {
+        return opts
+            .agents
+            .iter()
+            .map(|n| Agent::from_config_name(n))
+            .collect();
     }
     if interactive() {
-        return prompt_for_agent();
+        return prompt_for_agents();
     }
-    // Non-interactive default
-    Ok(Agent::all()[0])
+    Ok(vec![Agent::all()[0]])
 }
 
-/// Resolve whether to set a project-level agent override. Priority:
-/// 1. Explicit `--agent` flag → set override to that agent
+/// Resolve which agents to add at the project level. Priority:
+/// 1. Explicit `--add-agent` flags → add those agents
 /// 2. Interactive prompt (if terminal)
-/// 3. No override in non-interactive mode
-fn resolve_project_agent(opts: &InitOpts) -> Result<Option<Agent>> {
-    if let Some(ref name) = opts.agent {
-        return Ok(Some(Agent::from_config_name(name)?));
+/// 3. No project agents in non-interactive mode
+fn resolve_project_agents(opts: &InitOpts) -> Result<Vec<Agent>> {
+    if !opts.agents.is_empty() {
+        return opts
+            .agents
+            .iter()
+            .map(|n| Agent::from_config_name(n))
+            .collect();
     }
     if interactive() {
-        return prompt_for_project_agent();
+        return prompt_for_project_agents();
     }
-    Ok(None)
+    Ok(Vec::new())
 }
 
 /// Run user-wide initialization.
 ///
-/// Prompts for agent preference (unless provided), writes
+/// Prompts for agents (unless provided), writes
 /// `~/.symposium/config.toml`, and registers global hooks.
 pub async fn init_user(sym: &mut Symposium, out: &Output, opts: &InitOpts) -> Result<()> {
     out.println("Setting up symposium for your user account.\n");
 
-    let agent = resolve_agent(opts)?;
+    let agents = resolve_user_agents(opts)?;
 
-    // Write agent config
-    sym.config.agent = AgentConfig {
-        name: Some(agent.config_name().to_string()),
-        sync_default: true,
-        auto_sync: false,
-    };
+    sym.config.agents = agents
+        .iter()
+        .map(|a| AgentEntry {
+            name: a.config_name().to_string(),
+        })
+        .collect();
     sym.save_config()
         .context("failed to write user config")?;
 
     let config_path = sym.config_dir().join("config.toml");
+    let agent_names: Vec<_> = agents.iter().map(|a| a.display_name()).collect();
     out.done(format!(
-        "{}: wrote user config (agent: {})",
+        "{}: wrote user config (agents: {})",
         display_path(&config_path),
-        agent.display_name()
+        agent_names.join(", ")
     ));
 
     // Register global hooks
@@ -85,7 +93,7 @@ pub async fn init_user(sym: &mut Symposium, out: &Output, opts: &InitOpts) -> Re
 
 /// Run project-level initialization.
 ///
-/// Finds workspace root from `cwd`, optionally prompts for agent override,
+/// Finds workspace root from `cwd`, optionally prompts for project agents,
 /// creates `.symposium/config.toml`, and runs sync.
 pub async fn init_project(
     sym: &Symposium,
@@ -104,14 +112,15 @@ pub async fn init_project(
     if config_dir.join("config.toml").exists() {
         out.already_ok(".symposium/config.toml already exists, syncing");
     } else {
-        let agent_override = resolve_project_agent(opts)?;
+        let project_agents = resolve_project_agents(opts)?;
 
-        // Create project config
         let config = ProjectConfig {
-            agent: agent_override.map(|a| AgentConfig {
-                name: Some(a.config_name().to_string()),
-                ..Default::default()
-            }),
+            agents: project_agents
+                .iter()
+                .map(|a| AgentEntry {
+                    name: a.config_name().to_string(),
+                })
+                .collect(),
             ..Default::default()
         };
         config.save(&workspace_root)
@@ -141,7 +150,7 @@ pub async fn init_default(
     opts: &InitOpts,
 ) -> Result<()> {
     let user_config_exists = sym.config_dir().join("config.toml").exists()
-        && sym.config.agent.name.is_some();
+        && !sym.config.agents.is_empty();
 
     if !user_config_exists {
         init_user(sym, out, opts).await?;
@@ -185,30 +194,33 @@ pub async fn init_default(
 // Interactive prompts
 // ---------------------------------------------------------------------------
 
-fn prompt_for_agent() -> Result<Agent> {
+fn prompt_for_agents() -> Result<Vec<Agent>> {
     let agents = Agent::all();
     let items: Vec<&str> = agents.iter().map(|a| a.display_name()).collect();
 
-    let selection = Select::new()
-        .with_prompt("Which agent do you use?")
+    let selections = MultiSelect::new()
+        .with_prompt("Which agents do you use? (space to select, enter to confirm)")
         .items(&items)
-        .default(0)
+        .defaults(&[true, false, false])
         .interact()?;
 
-    Ok(agents[selection])
+    if selections.is_empty() {
+        bail!("at least one agent must be selected");
+    }
+
+    Ok(selections.into_iter().map(|i| agents[i]).collect())
 }
 
-fn prompt_for_project_agent() -> Result<Option<Agent>> {
-    let override_agent = Confirm::new()
-        .with_prompt("Set a project-level agent override? (default: each developer uses their own)")
+fn prompt_for_project_agents() -> Result<Vec<Agent>> {
+    let add_agents = Confirm::new()
+        .with_prompt("Add project-level agents? (default: each developer uses their own)")
         .default(false)
         .interact()?;
 
-    if override_agent {
-        let agent = prompt_for_agent()?;
-        Ok(Some(agent))
+    if add_agents {
+        prompt_for_agents()
     } else {
-        Ok(None)
+        Ok(Vec::new())
     }
 }
 

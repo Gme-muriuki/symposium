@@ -48,9 +48,10 @@ pub enum Commands {
         #[arg(long)]
         project: bool,
 
-        /// Agent to use (e.g., claude, copilot, gemini). Skips the interactive prompt.
-        #[arg(long)]
-        agent: Option<String>,
+        /// Agent to configure (e.g., claude, copilot, gemini). Repeatable.
+        /// Skips the interactive prompt.
+        #[arg(long = "add-agent")]
+        agents: Vec<String>,
     },
 
     /// Synchronize configuration with workspace dependencies and agent
@@ -63,9 +64,9 @@ pub enum Commands {
         #[arg(long)]
         agent: bool,
 
-        /// Set or change the project-level agent override
-        #[arg(long, value_name = "NAME")]
-        set_agent: Option<String>,
+        /// Add an agent to the project config. Repeatable.
+        #[arg(long = "add-agent", value_name = "NAME")]
+        add_agents: Vec<String>,
     },
 
     /// Hook entry point invoked by your agent (internal)
@@ -128,9 +129,9 @@ pub async fn run(sym: &mut Symposium, cmd: Commands, cwd: &Path, out: &Output) -
         Commands::Init {
             user,
             project,
-            agent,
+            agents,
         } => {
-            let opts = InitOpts { agent };
+            let opts = InitOpts { agents };
             if user && !project {
                 init::init_user(sym, out, &opts).await
             } else if project && !user {
@@ -143,10 +144,10 @@ pub async fn run(sym: &mut Symposium, cmd: Commands, cwd: &Path, out: &Output) -
         Commands::Sync {
             workspace,
             agent,
-            set_agent,
+            add_agents,
         } => {
-            if let Some(ref name) = set_agent {
-                sync::set_agent(cwd, name, out)?;
+            for name in &add_agents {
+                sync::add_agent(cwd, name, out)?;
             }
 
             let do_workspace = workspace || (!workspace && !agent);
