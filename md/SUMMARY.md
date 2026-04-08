@@ -11,7 +11,7 @@
 # Summary
 
 - [Introduction](./introduction.md)
-- [What is Symposium?](./about.md)
+- [About cargo-agents](./about.md)
 
 # User's guide
 

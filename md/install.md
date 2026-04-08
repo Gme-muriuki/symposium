@@ -2,49 +2,30 @@
 
 ## Install
 
-`cargo-agents` requires the [Rust toolchain](https://rustup.rs/). Install it with:
-
 ```bash
-cargo install cargo-agents
+cargo binstall cargo-agents       # or `cargo install` if you prefer
 ```
 
-Or, for a faster prebuilt binary:
+## Set up your user and project
+
+From your project directory, run:
 
 ```bash
-cargo binstall cargo-agents
+cargo agents init
 ```
 
-## Step 1: User-wide setup
+This walks you through two things:
 
-The preferred setup for `cargo-agents` lets each user pick their own agent. To configure your user-wide agent, run the following from any directory:
+1. **User-wide setup** — picks your agent (Claude Code, Copilot, Gemini) and stores it in `~/.cargo-agents/config.toml`. Registers a global hook so your agent picks up project extensions automatically.
+2. **Project setup** — scans your workspace dependencies, discovers available extensions, and generates `.cargo-agents/config.toml`.
 
-```bash
-cargo agents init --user
-```
+Check `.cargo-agents/` into version control so your team shares the same configuration. Each developer picks their own agent via `cargo agents init --user`.
 
-This will ask you which agent you use (e.g., Claude Code, Cursor) and store your preference in `~/.cargo-agents/config.toml`. Where applicable, it also registers a global hook so that your agent automatically picks up project extensions on startup.
+You can also run the two steps separately with `cargo agents init --user` and `cargo agents init --project`.
 
-If you're working in a project that already uses `cargo-agents`, this is all you have to do — when you open the project in your agent, everything will be set up automatically.
+## What's in `.cargo-agents/config.toml`
 
-## Step 2: Project setup
-
-If you're setting up a project for the first time, navigate to your Rust project and run:
-
-```bash
-cargo agents init --project
-```
-
-This will ask you a few questions to help you get set up. It scans your workspace dependencies, discovers available extensions, and generates a `.cargo-agents/config.toml` for the project. We recommend checking `.cargo-agents/` into version control so your team shares the same configuration.
-
-## Contents of `.cargo-agents/config.toml`
-
-The project configuration in `.cargo-agents/config.toml` controls which extensions are active for your project. There are three kinds of extensions:
-
-- **Skills** — crate-specific guidance that helps your agent use your dependencies correctly (see [skill definition](./reference/skill-definition.md))
-- **Workflows** — tools that improve your agent's development workflow, like running cargo commands more efficiently (see [plugin definition](./reference/plugin-definition.md))
-- **MCP servers** — additional capabilities your agent can call on as needed (planned, not yet implemented)
-
-The config file lists each available extension with a simple on/off toggle:
+The project config lists each available extension with a simple on/off toggle:
 
 ```toml
 [skills]
@@ -55,21 +36,14 @@ tokio = true
 rtk = true
 ```
 
-When your agent starts, the registered hook runs `cargo agents` in the background. It reads this config and installs the enabled extensions into the locations your agent expects (e.g., `.claude/skills/` for Claude Code). You don't need to do anything, for most agents the hook handles it automatically.
+When your agent starts, the registered hook installs the enabled extensions into the locations your agent expects (e.g., `.claude/skills/` for Claude Code). You don't need to do anything — the hook handles it.
 
-(See the [fine print](./reference/configuration.md) for agent-specific caveats.)
+## Keeping in sync
 
-## Synchronizing over time
-
-As your project evolves — dependencies added, removed, or updated — your configuration can get out of date. To bring it back in sync:
+As dependencies change, run:
 
 ```bash
 cargo agents sync
 ```
 
-This does two things:
-
-1. **Updates your project config** (`--workspace`) — re-scans your workspace dependencies and updates `.cargo-agents/config.toml`. New extensions are added, removed dependencies are cleaned up, and your existing on/off choices are preserved.
-2. **Updates your agent setup** (`--agent`) — re-installs the enabled extensions into your agent's directories.
-
-You can run either step individually with `cargo agents sync --workspace` or `cargo agents sync --agent`.
+This re-scans your dependencies, updates the config, and re-installs extensions. Your existing on/off choices are preserved. See [`cargo agents sync`](./reference/cargo-agents-sync.md) for options.
