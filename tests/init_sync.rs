@@ -343,3 +343,30 @@ async fn self_contained_excludes_user_plugins() {
         "self-contained should exclude user plugins, got: {context}"
     );
 }
+
+/// Self-contained project excludes user-level *skills* from sync --workspace.
+///
+/// plugins0 has a serde skill, but project-self-contained0 is self-contained
+/// with no skill plugins of its own, so sync should discover no skills.
+#[tokio::test]
+async fn self_contained_excludes_user_skills_from_sync() {
+    let mut ctx = cargo_agents_testlib::with_fixture(&["plugins0", "project-self-contained0"]);
+
+    ctx.cargo_agents(&["init", "--user", "--agent", "claude"])
+        .await
+        .unwrap();
+
+    // Run sync --workspace on the self-contained project
+    ctx.cargo_agents(&["sync", "--workspace"]).await.unwrap();
+
+    let project_config = cargo_agents::config::ProjectConfig::load(
+        ctx.workspace_root.as_ref().unwrap(),
+    );
+
+    // The serde skill from plugins0 should NOT appear — self-contained excludes user sources
+    let skills = project_config.map(|c| c.skills).unwrap_or_default();
+    assert!(
+        !skills.contains_key("serde"),
+        "self-contained should not discover user-level serde skill, got: {skills:?}"
+    );
+}

@@ -33,12 +33,13 @@ pub async fn sync_workspace(
         .join("cargo-lock-mtime")
         .join(cache_key_for_path(project_root));
 
+    // Load existing project config (used for mtime check, source resolution, and merge)
+    let existing = ProjectConfig::load(project_root).unwrap_or_default();
+
     // Step 1: Check Cargo.lock mtime
-    if let Some(existing) = ProjectConfig::load(project_root) {
-        if is_mtime_unchanged(&lock_path, &mtime_cache_path) {
-            out.already_ok("Cargo.lock unchanged, skipping workspace sync");
-            return Ok(existing);
-        }
+    if existing.skills.len() > 0 && is_mtime_unchanged(&lock_path, &mtime_cache_path) {
+        out.already_ok("Cargo.lock unchanged, skipping workspace sync");
+        return Ok(existing);
     }
 
     // Step 2: Read workspace dependencies
@@ -48,16 +49,13 @@ pub async fn sync_workspace(
 
     out.info(format!("scanning {} workspace dependencies", dep_names.len()));
 
-    // Step 3: Load plugin sources and discover skills
-    let registry = plugins::load_registry(sym);
+    // Step 3: Load plugin sources and discover skills (project-aware)
+    let registry = plugins::load_registry_with(sym, Some(&existing), Some(project_root));
     let applicable = skills::skills_applicable_to(sym, &registry, &workspace).await;
 
     // Collect applicable crate names from skills
     let mut available_skills: BTreeMap<String, bool> = BTreeMap::new();
-    let sync_default = resolve_sync_default(
-        &sym.config,
-        ProjectConfig::load(project_root).as_ref(),
-    );
+    let sync_default = resolve_sync_default(&sym.config, Some(&existing));
 
     for entry in &applicable {
         for crate_name in entry.effective_crate_names() {
@@ -68,7 +66,7 @@ pub async fn sync_workspace(
     }
 
     // Step 5: Merge with existing config
-    let existing = ProjectConfig::load(project_root).unwrap_or_default();
+    // (reuses `existing` loaded at the top)
 
     // Build the merged skills map: preserve existing choices, add new, drop stale
     let mut merged_skills: BTreeMap<String, bool> = BTreeMap::new();
