@@ -61,8 +61,22 @@ Stored at `.cargo-agents/config.toml` in your project root. Created by `cargo ag
 
 ```toml
 [agent]
-name = "claude-code"
+name = "claude"
 sync-default = false
+
+self-contained = false
+
+[defaults]
+symposium-recommendations = true
+user-plugins = true
+
+[[plugin-source]]
+name = "our-team"
+git = "https://github.com/our-org/cargo-agents-plugins"
+
+[[plugin-source]]
+name = "local"
+path = "plugins"
 
 [skills]
 salsa = true
@@ -79,6 +93,24 @@ autofmt = true
 Optional. If present, overrides the user's agent settings for this project. Supports the same keys as the user-level `[agent]` section.
 
 If omitted, each developer uses their own user-wide agent preference.
+
+### `self-contained`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `self-contained` | bool | `false` | If `true`, ignore user-level plugin sources entirely. Only project sources (including its own `[defaults]` and `[[plugin-source]]` entries) are used. |
+
+### `[defaults]`
+
+Optional. Controls built-in plugin sources at the project level. Same keys as the user-level `[defaults]` section.
+
+When `self-contained = false` (the default), project defaults are merged with user defaults — a project `false` overrides a user `true`. When `self-contained = true`, only the project defaults apply.
+
+### `[[plugin-source]]`
+
+Project-level plugin sources. Same format as user-level `[[plugin-source]]` entries. Paths are resolved relative to the project root.
+
+When `self-contained = false`, these are unioned with user-level sources. When `self-contained = true`, these are the only sources used (along with any enabled defaults).
 
 ### `[skills]`
 
@@ -99,7 +131,8 @@ When both user and project configs exist, project settings take precedence:
 | `agent.name` | Project if set, else user |
 | `agent.sync-default` | Project if set, else user |
 | `agent.auto-sync` | Project if set, else user |
-| Plugin sources | User config only (for now) |
+| Plugin sources | Union of user + project (or project only if `self-contained`) |
+| Defaults | Merged (project `false` overrides user `true`; project only if `self-contained`) |
 | Skills, workflows | Project config only |
 
 ## Directory resolution

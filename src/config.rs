@@ -158,6 +158,23 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub agent: Option<AgentConfig>,
 
+    /// If true, ignore user-level plugin sources entirely.
+    /// The project's own defaults and plugin sources are still active.
+    #[serde(default, rename = "self-contained")]
+    pub self_contained: bool,
+
+    /// Controls which built-in plugin sources are enabled at the project level.
+    /// When `self-contained = true`, these replace the user-level defaults.
+    /// When `self-contained = false`, these are merged with the user-level defaults
+    /// (project `false` overrides user `true`).
+    #[serde(default)]
+    pub defaults: Option<DefaultsConfig>,
+
+    /// Project-level plugin sources (git repos or local paths).
+    /// Paths are relative to the project root.
+    #[serde(default, rename = "plugin-source")]
+    pub plugin_source: Vec<PluginSourceConfig>,
+
     /// Crate skills discovered from workspace dependencies. Key = crate name, value = enabled.
     #[serde(default)]
     pub skills: BTreeMap<String, bool>,
@@ -291,6 +308,16 @@ pub fn resolve_sync_default(user: &Config, project: Option<&ProjectConfig>) -> b
     user.agent.sync_default
 }
 
+/// A plugin source together with its base directory for resolving relative paths.
+#[derive(Debug, Clone)]
+pub struct ResolvedPluginSource {
+    pub source: PluginSourceConfig,
+    /// Directory to resolve relative `path` values against.
+    /// For user sources this is the user config dir; for project sources
+    /// this is the project root.
+    pub base_dir: PathBuf,
+}
+
 const BUILTIN_RECOMMENDATIONS_URL: &str = "https://github.com/symposium-dev/recommendations";
 
 /// Full application context: parsed config + resolved directory paths.
@@ -397,29 +424,86 @@ impl Symposium {
     }
 
     /// Returns the effective list of plugin sources, including built-in defaults.
-    pub fn plugin_sources(&self) -> Vec<PluginSourceConfig> {
-        let c = &self.config;
+    ///
+    /// When a project config is provided, its sources are unioned with user sources.
+    /// If the project is `self-contained`, user sources are excluded.
+    /// `project_root` is used to resolve relative paths in project sources.
+    pub fn plugin_sources(
+        &self,
+        project: Option<&ProjectConfig>,
+        project_root: Option<&Path>,
+    ) -> Vec<ResolvedPluginSource> {
+        let self_contained = project.is_some_and(|p| p.self_contained);
+
         let mut sources = Vec::new();
 
-        if c.defaults.symposium_recommendations {
-            sources.push(PluginSourceConfig {
-                name: "symposium-recommendations".to_string(),
-                git: Some(BUILTIN_RECOMMENDATIONS_URL.to_string()),
-                path: None,
-                auto_update: true,
+        // Resolve which defaults are active
+        let effective_recommendations;
+        let effective_user_plugins;
+
+        if self_contained {
+            // Self-contained: only project defaults matter
+            let proj_defaults = project.and_then(|p| p.defaults.as_ref());
+            effective_recommendations = proj_defaults
+                .map_or(true, |d| d.symposium_recommendations);
+            effective_user_plugins = proj_defaults
+                .map_or(true, |d| d.user_plugins);
+        } else {
+            // Merge: project can override user defaults (false wins)
+            let user_rec = self.config.defaults.symposium_recommendations;
+            let user_up = self.config.defaults.user_plugins;
+            let proj_defaults = project.and_then(|p| p.defaults.as_ref());
+            effective_recommendations = user_rec
+                && proj_defaults.map_or(true, |d| d.symposium_recommendations);
+            effective_user_plugins = user_up
+                && proj_defaults.map_or(true, |d| d.user_plugins);
+        }
+
+        // Built-in defaults
+        if effective_recommendations {
+            sources.push(ResolvedPluginSource {
+                source: PluginSourceConfig {
+                    name: "symposium-recommendations".to_string(),
+                    git: Some(BUILTIN_RECOMMENDATIONS_URL.to_string()),
+                    path: None,
+                    auto_update: true,
+                },
+                base_dir: self.config_dir.clone(),
             });
         }
 
-        if c.defaults.user_plugins {
-            sources.push(PluginSourceConfig {
-                name: "user-plugins".to_string(),
-                git: None,
-                path: Some("plugins".to_string()),
-                auto_update: true,
+        if effective_user_plugins {
+            sources.push(ResolvedPluginSource {
+                source: PluginSourceConfig {
+                    name: "user-plugins".to_string(),
+                    git: None,
+                    path: Some("plugins".to_string()),
+                    auto_update: true,
+                },
+                base_dir: self.config_dir.clone(),
             });
         }
 
-        sources.extend(c.plugin_source.clone());
+        // User-level sources (unless self-contained)
+        if !self_contained {
+            for s in &self.config.plugin_source {
+                sources.push(ResolvedPluginSource {
+                    source: s.clone(),
+                    base_dir: self.config_dir.clone(),
+                });
+            }
+        }
+
+        // Project-level sources
+        if let (Some(proj), Some(root)) = (project, project_root) {
+            for s in &proj.plugin_source {
+                sources.push(ResolvedPluginSource {
+                    source: s.clone(),
+                    base_dir: root.to_path_buf(),
+                });
+            }
+        }
+
         sources
     }
 
@@ -686,6 +770,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             workflows: BTreeMap::new(),
+            ..Default::default()
         };
         config.save(tmp.path()).unwrap();
         let loaded = ProjectConfig::load(tmp.path()).unwrap();

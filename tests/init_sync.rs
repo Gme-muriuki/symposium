@@ -82,6 +82,9 @@ async fn init_project_creates_config_and_discovers_skills() {
     );
 
     expect![[r#"
+        self-contained = false
+        plugin-source = []
+
         [skills]
         serde = true
 
@@ -120,6 +123,9 @@ async fn sync_workspace_preserves_existing_choices() {
     );
 
     expect![[r#"
+        self-contained = false
+        plugin-source = []
+
         [skills]
         serde = false
 
@@ -205,6 +211,9 @@ async fn sync_set_agent_changes_project_agent() {
     );
 
     expect![[r#"
+        self-contained = false
+        plugin-source = []
+
         [agent]
         name = "copilot"
         sync-default = true
@@ -239,6 +248,9 @@ async fn init_project_with_agent_sets_override() {
     );
 
     expect![[r#"
+        self-contained = false
+        plugin-source = []
+
         [agent]
         name = "gemini"
         sync-default = true

@@ -99,6 +99,7 @@ pub async fn sync_workspace(
             agent: existing.agent.clone(),
             skills: merged_skills.clone(),
             workflows: existing.workflows.clone(),
+            ..Default::default()
         };
         config.save(project_root)?;
     } else {
@@ -137,6 +138,9 @@ pub async fn sync_workspace(
         agent: existing.agent,
         skills: merged_skills,
         workflows: existing.workflows,
+        self_contained: existing.self_contained,
+        defaults: existing.defaults,
+        plugin_source: existing.plugin_source,
     })
 }
 
