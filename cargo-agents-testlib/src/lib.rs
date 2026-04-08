@@ -173,8 +173,13 @@ pub fn with_fixture(fixtures: &[&str]) -> TestContext {
     }
 }
 
-/// Recursively copy a directory tree, tracking directories containing
-/// `config.toml` and `Cargo.toml`.
+/// Recursively copy a directory tree, tracking special directories.
+///
+/// - A `config.toml` inside a `dot-cargo-agents/` directory marks the
+///   user config dir (the Symposium config root).
+/// - A `Cargo.toml` marks the workspace root.
+/// - Other `config.toml` files (e.g., `.cargo-agents/config.toml` inside
+///   the workspace) are copied but not treated as user config.
 fn copy_dir_recursive(src: &Path, dst: &Path, scan: &mut FixtureScanResult) {
     std::fs::create_dir_all(dst).unwrap();
     for entry in std::fs::read_dir(src).unwrap() {
@@ -188,7 +193,13 @@ fn copy_dir_recursive(src: &Path, dst: &Path, scan: &mut FixtureScanResult) {
 
             let filename = entry.file_name();
             if filename == "config.toml" {
-                scan.config_dirs.push(dst.to_path_buf());
+                // Only treat as user config dir if parent is dot-cargo-agents
+                let is_user_config = dst
+                    .file_name()
+                    .is_some_and(|n| n == "dot-cargo-agents");
+                if is_user_config {
+                    scan.config_dirs.push(dst.to_path_buf());
+                }
             } else if filename == "Cargo.toml" {
                 scan.workspace_dirs.push(dst.to_path_buf());
             }
