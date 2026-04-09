@@ -1,18 +1,18 @@
+use crate::{
+    config::Symposium,
+    hook_schema::{AgentHookEvent, AgentHookOutput, AgentHookPayload},
+    plugins::ParsedPlugin,
+    rust_fmt,
+};
 use std::{
     io::{Read, Write},
     process::{Command, ExitCode, Stdio},
 };
 
-use crate::plugins::ParsedPlugin;
-use crate::{
-    config::Symposium,
-    hook_schema::{AgentHookEvent, AgentHookOutput, AgentHookPayload},
-};
-
 // Re-export hook schema types for convenience.
 pub use crate::hook_schema::{
-    HookAgent, HookEvent, HookOutput, HookPayload, HookSpecificOutput, HookSubPayload, PostToolUsePayload,
-    PreToolUsePayload, UserPromptSubmitPayload,
+    HookAgent, HookEvent, HookOutput, HookPayload, HookSpecificOutput, HookSubPayload,
+    PostToolUsePayload, PreToolUsePayload, UserPromptSubmitPayload,
 };
 
 /// CLI entry point: read payload from stdin, dispatch, print output.
@@ -118,7 +118,20 @@ async fn handle_post_tool_use(sym: &Symposium, post: &PostToolUsePayload) -> Hoo
     }
 
     crate::session_state::save_session(sym, session_id, &session);
-    HookOutput::empty()
+    // Check if any .rs files changed and remind agent to run cargo fmt
+    let format_suggestion = rust_fmt::maybe_suggest_rust_fmt(
+        &mut session,
+        &cwd.to_path_buf(),
+        &sym.config.hooks.format_reminder,
+    );
+
+    crate::session_state::save_session(sym, session_id, &session);
+
+    // Return fmt suggestion if needed
+    match format_suggestion {
+        Some(suggestion) => HookOutput::with_context("PostToolUse", suggestion),
+        None => HookOutput::empty(),
+    }
 }
 
 /// Detect if a Bash tool successfully ran `symposium crate <name>`.
@@ -504,6 +517,7 @@ fn hooks_for_payload(
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused)]
     use crate::hook_schema::claude::{
         ClaudeCodeHookCommonPayload, ClaudeCodePreToolUseOutput, ClaudeCodePreToolUsePayload,
     };
@@ -603,7 +617,7 @@ mod tests {
             tool_name: "Bash".to_string(),
             rest: serde_json::Map::new(),
         };
-            let _ = event_handler.dispatch_plugin_hooks(
+        let _ = event_handler.dispatch_plugin_hooks(
             &sym,
             Box::new(payload),
             Box::new(ClaudeCodePreToolUseOutput::default()),

@@ -32,18 +32,39 @@ pub struct HooksConfig {
     /// Set to 0 to disable nudges entirely.
     #[serde(default = "default_nudge_interval", rename = "nudge-interval")]
     pub nudge_interval: i64,
+
+    ///
+    #[serde(default = "default_format_reminder", rename = "format-reminder")]
+    pub format_reminder: FormatReminderPolicy,
+}
+
+/// Controls how often the agent is reminded to run `cargo fmt`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatReminderPolicy {
+    /// Remind once per session (deafult)
+    Once,
+    /// Remind every time a .rs file changes.
+    Always,
+    /// Never remind.
+    Never,
 }
 
 impl Default for HooksConfig {
     fn default() -> Self {
         Self {
             nudge_interval: default_nudge_interval(),
+            format_reminder: default_format_reminder(),
         }
     }
 }
 
 fn default_nudge_interval() -> i64 {
     50
+}
+
+fn default_format_reminder() -> FormatReminderPolicy {
+    FormatReminderPolicy::Once
 }
 
 #[derive(Debug, Deserialize, Clone)]
