@@ -58,7 +58,7 @@ pub struct HooksConfig {
     pub nudge_interval: i64,
 
     /// Remind an agent to format the code after a tool use
-    #[serde(default = "default_reminder_policy", rename = "remind_format_policy")]
+    #[serde(default = "default_reminder_policy", rename = "fmt-reminder", skip_serializing_if = "FormatReminderPolicy::is_default")]
     pub remind_format_policy: FormatReminderPolicy,
 }
 
@@ -71,6 +71,12 @@ pub enum FormatReminderPolicy {
     Always,
     /// Reminder never sent at all
     Never,
+}
+
+impl FormatReminderPolicy {
+    fn is_default(&self) -> bool {
+        self == &default_reminder_policy()
+    }
 }
 
 impl Default for HooksConfig {
