@@ -765,21 +765,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_user_prompt_submit_returns_empty_for_now() {
-        let tmp = tempfile::tempdir().unwrap();
-        let sym = Symposium::from_dir(tmp.path());
-        let payload = HookPayload {
-            sub_payload: HookSubPayload::UserPromptSubmit(UserPromptSubmitPayload {
-                prompt: "Use tokio for async".to_string(),
-                session_id: Some("test-session".to_string()),
-                cwd: Some("/tmp".to_string()),
-            }),
-            rest: serde_json::Map::new(),
-        };
-        let output = dispatch_builtin(&sym, &payload).await;
-        assert!(output.hook_specific_output.is_none());
-    }
-
+   async fn builtin_post_tool_use_returns_empty_for_now() {
+     let tmp = tempfile::tempdir().unwrap();
+     let mut sym = Symposium::from_dir(tmp.path());
+     sym.config.hooks.remind_format_policy = crate::config::FormatReminderPolicy::Never;
+     let payload = HookPayload {
+         sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
+             tool_name: "Bash".to_string(),
+             tool_input: serde_json::json!({"command": "ls"}),
+             tool_response: serde_json::json!({"stdout": "file.rs"}),
+             session_id: Some("test-session".to_string()),
+             cwd: Some("/tmp".to_string()),
+         }),
+         rest: serde_json::Map::new(),
+     };
+     let output = dispatch_builtin(&sym, &payload).await;
+     assert!(output.hook_specific_output.is_none());
+   }
+    
     #[test]
     fn hook_output_serializes_with_additional_context() {
         let output =
