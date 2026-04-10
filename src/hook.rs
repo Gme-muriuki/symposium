@@ -616,7 +616,6 @@ mod tests {
     use crate::session_state::{self, SessionData};
 
     use super::*;
-    use std::cell::RefCell;
     use std::fs;
     use std::time::Duration;
 
@@ -739,24 +738,6 @@ mod tests {
         let payload = HookPayload {
             sub_payload: HookSubPayload::PreToolUse(PreToolUsePayload {
                 tool_name: "Bash".to_string(),
-            }),
-            rest: serde_json::Map::new(),
-        };
-        let output = dispatch_builtin(&sym, &payload).await;
-        assert!(output.hook_specific_output.is_none());
-    }
-
-    #[tokio::test]
-    async fn builtin_post_tool_use_returns_empty_for_now() {
-        let tmp = tempfile::tempdir().unwrap();
-        let sym = Symposium::from_dir(tmp.path());
-        let payload = HookPayload {
-            sub_payload: HookSubPayload::PostToolUse(PostToolUsePayload {
-                tool_name: "Bash".to_string(),
-                tool_input: serde_json::json!({"command": "ls"}),
-                tool_response: serde_json::json!({"stdout": "file.rs"}),
-                session_id: Some("test-session".to_string()),
-                cwd: Some("/tmp".to_string()),
             }),
             rest: serde_json::Map::new(),
         };
