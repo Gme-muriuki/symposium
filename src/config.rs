@@ -56,18 +56,38 @@ pub struct HooksConfig {
     /// Set to 0 to disable nudges entirely.
     #[serde(default = "default_nudge_interval", rename = "nudge-interval")]
     pub nudge_interval: i64,
+
+    /// Remind an agent to format the code after a tool use
+    #[serde(default = "default_reminder_policy", rename = "remind_format_policy")]
+    pub remind_format_policy: FormatReminderPolicy,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub enum FormatReminderPolicy {
+    /// Reminder only sent once per session
+    /// Todo: Make this configurable like once after N tool use.
+    Once,
+    /// Reminder sent after every tool use
+    Always,
+    /// Reminder never sent at all
+    Never,
 }
 
 impl Default for HooksConfig {
     fn default() -> Self {
         Self {
             nudge_interval: default_nudge_interval(),
+            remind_format_policy: default_reminder_policy(),
         }
     }
 }
 
 fn default_nudge_interval() -> i64 {
     50
+}
+
+fn default_reminder_policy() -> FormatReminderPolicy {
+    FormatReminderPolicy::Once
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -194,10 +214,7 @@ impl ProjectConfig {
         match toml::from_str(&contents) {
             Ok(c) => Some(c),
             Err(e) => {
-                eprintln!(
-                    "warning: failed to parse {}: {e}",
-                    path.display()
-                );
+                eprintln!("warning: failed to parse {}: {e}", path.display());
                 None
             }
         }
@@ -283,7 +300,10 @@ impl ProjectConfig {
         let mut table = toml_edit::Table::new();
         table["name"] = toml_edit::value(agent_name);
 
-        if let Some(arr) = doc.get_mut("agent").and_then(|v| v.as_array_of_tables_mut()) {
+        if let Some(arr) = doc
+            .get_mut("agent")
+            .and_then(|v| v.as_array_of_tables_mut())
+        {
             arr.push(table);
         } else {
             let mut arr = toml_edit::ArrayOfTables::new();
@@ -306,7 +326,10 @@ impl ProjectConfig {
             .parse()
             .unwrap_or_else(|_| toml_edit::DocumentMut::new());
 
-        if let Some(agents) = doc.get_mut("agent").and_then(|v| v.as_array_of_tables_mut()) {
+        if let Some(agents) = doc
+            .get_mut("agent")
+            .and_then(|v| v.as_array_of_tables_mut())
+        {
             agents.retain(|t| {
                 t.get("name")
                     .and_then(|v| v.as_str())
@@ -496,19 +519,16 @@ impl Symposium {
         if self_contained {
             // Self-contained: only project defaults matter
             let proj_defaults = project.and_then(|p| p.defaults.as_ref());
-            effective_recommendations = proj_defaults
-                .map_or(true, |d| d.symposium_recommendations);
-            effective_user_plugins = proj_defaults
-                .map_or(true, |d| d.user_plugins);
+            effective_recommendations = proj_defaults.map_or(true, |d| d.symposium_recommendations);
+            effective_user_plugins = proj_defaults.map_or(true, |d| d.user_plugins);
         } else {
             // Merge: project can override user defaults (false wins)
             let user_rec = self.config.defaults.symposium_recommendations;
             let user_up = self.config.defaults.user_plugins;
             let proj_defaults = project.and_then(|p| p.defaults.as_ref());
-            effective_recommendations = user_rec
-                && proj_defaults.map_or(true, |d| d.symposium_recommendations);
-            effective_user_plugins = user_up
-                && proj_defaults.map_or(true, |d| d.user_plugins);
+            effective_recommendations =
+                user_rec && proj_defaults.map_or(true, |d| d.symposium_recommendations);
+            effective_user_plugins = user_up && proj_defaults.map_or(true, |d| d.user_plugins);
         }
 
         // Built-in defaults
@@ -817,7 +837,9 @@ mod tests {
     fn project_config_save_load_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
         let config = ProjectConfig {
-            agents: vec![AgentEntry { name: "claude".to_string() }],
+            agents: vec![AgentEntry {
+                name: "claude".to_string(),
+            }],
             skills: [("tokio".to_string(), true), ("serde".to_string(), false)]
                 .into_iter()
                 .collect(),
@@ -835,11 +857,15 @@ mod tests {
     #[test]
     fn resolve_agents_unions_user_and_project() {
         let user = Config {
-            agents: vec![AgentEntry { name: "gemini".to_string() }],
+            agents: vec![AgentEntry {
+                name: "gemini".to_string(),
+            }],
             ..Config::default()
         };
         let project = ProjectConfig {
-            agents: vec![AgentEntry { name: "claude".to_string() }],
+            agents: vec![AgentEntry {
+                name: "claude".to_string(),
+            }],
             ..Default::default()
         };
         let agents = resolve_agents(&user, Some(&project));
@@ -849,11 +875,15 @@ mod tests {
     #[test]
     fn resolve_agents_deduplicates() {
         let user = Config {
-            agents: vec![AgentEntry { name: "claude".to_string() }],
+            agents: vec![AgentEntry {
+                name: "claude".to_string(),
+            }],
             ..Config::default()
         };
         let project = ProjectConfig {
-            agents: vec![AgentEntry { name: "claude".to_string() }],
+            agents: vec![AgentEntry {
+                name: "claude".to_string(),
+            }],
             ..Default::default()
         };
         let agents = resolve_agents(&user, Some(&project));
@@ -863,12 +893,16 @@ mod tests {
     #[test]
     fn resolve_agents_self_contained_excludes_user() {
         let user = Config {
-            agents: vec![AgentEntry { name: "gemini".to_string() }],
+            agents: vec![AgentEntry {
+                name: "gemini".to_string(),
+            }],
             ..Config::default()
         };
         let project = ProjectConfig {
             self_contained: true,
-            agents: vec![AgentEntry { name: "claude".to_string() }],
+            agents: vec![AgentEntry {
+                name: "claude".to_string(),
+            }],
             ..Default::default()
         };
         let agents = resolve_agents(&user, Some(&project));
@@ -878,13 +912,12 @@ mod tests {
     #[test]
     fn resolve_agents_falls_back_to_user() {
         let user = Config {
-            agents: vec![AgentEntry { name: "gemini".to_string() }],
+            agents: vec![AgentEntry {
+                name: "gemini".to_string(),
+            }],
             ..Config::default()
         };
-        assert_eq!(
-            resolve_agents(&user, None),
-            vec!["gemini"]
-        );
+        assert_eq!(resolve_agents(&user, None), vec!["gemini"]);
     }
 
     #[test]

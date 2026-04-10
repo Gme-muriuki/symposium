@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod cargo_fmt;
 pub mod cli;
 pub mod config;
 pub mod dispatch;
