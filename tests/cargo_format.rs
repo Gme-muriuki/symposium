@@ -694,7 +694,6 @@ async fn mixed_rs_and_a_non_rs_file_change_triggers_fmt_reminder() {
     let ctx = with_fixture(&["fmt_always", "workspace0"]);
 
     // change both a .rs and a non-.rs file
-    std::thread::sleep(Duration::from_millis(15));
     fs::write(ctx.tempdir.path().join("main.rs"), b"// Mixed ").unwrap();
     fs::write(
         ctx.tempdir.path().join("readme.md"),
